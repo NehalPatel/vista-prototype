@@ -1,0 +1,25 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+
+# OS/Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Logs
+*.log
+
+# Model weights
+*.pt
+
+# Pipeline outputs (generated)
+vista-prototype/frames/
+vista-prototype/detections/
+vista-prototype/results/
+vista-prototype/videos/

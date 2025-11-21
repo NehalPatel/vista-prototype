@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VISTA Object Detection</title>
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body>
+    <header class="app-header" role="banner" aria-label="Application header">
+      <div class="container">
+        <h1 class="logo">VISTA</h1>
+        <p class="subtitle">YouTube Video Object Detection</p>
+      </div>
+    </header>
+
+    <main class="app-main" role="main">
+      <section class="input-section" aria-labelledby="input-title">
+        <div class="container">
+          <h2 id="input-title">Process a YouTube Video</h2>
+          <form id="process-form" aria-label="Video processing form">
+            <label for="video-url" class="sr-only">YouTube URL</label>
+            <input
+              id="video-url"
+              name="video-url"
+              type="url"
+              placeholder="Enter YouTube video URL"
+              aria-required="true"
+              aria-describedby="url-help"
+              required
+            />
+            <small id="url-help" class="help-text">Provide a valid YouTube URL (e.g., https://www.youtube.com/watch?v=...)</small>
+
+            <div class="controls">
+              <label for="conf-threshold">Confidence Threshold</label>
+              <input id="conf-threshold" type="number" min="0" max="1" step="0.05" value="0.7" aria-label="Confidence threshold" />
+
+              <label for="fps">Output FPS</label>
+              <input id="fps" type="number" min="1" max="60" step="1" value="1" aria-label="Output video frames per second" />
+            </div>
+
+            <button id="process-btn" type="submit" class="btn-primary" aria-label="Start processing">Process</button>
+            <div id="status" class="status" role="status" aria-live="polite"></div>
+            <div id="error" class="alert" role="alert" aria-live="assertive" hidden></div>
+          </form>
+        </div>
+      </section>
+
+      <section class="results-section" aria-labelledby="results-title">
+        <div class="container">
+          <h2 id="results-title">Results</h2>
+          <div id="results" class="results-grid" hidden>
+            <div class="card" id="meta-card" aria-label="Video metadata">
+              <h3>Video</h3>
+              <div class="meta">
+                <img id="thumb" alt="Video thumbnail" />
+                <div>
+                  <p><strong>Title:</strong> <span id="title"></span></p>
+                  <p><strong>Duration:</strong> <span id="duration"></span></p>
+                  <p><strong>Video ID:</strong> <span id="video-id"></span></p>
+                </div>
+              </div>
+            </div>
+
+            <div class="card" id="summary-card" aria-label="Detection summary">
+              <h3>Summary</h3>
+              <ul id="summary-list"></ul>
+            </div>
+
+            <div class="card" id="output-card" aria-label="Output files">
+              <h3>Outputs</h3>
+              <ul>
+                <li><a id="video-link" href="#" target="_blank" rel="noopener">Annotated Video</a></li>
+                <li><a id="json-link" href="#" target="_blank" rel="noopener">Detection Results (JSON)</a></li>
+                <li><a id="metadata-link" href="#" target="_blank" rel="noopener">Metadata</a></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-footer" role="contentinfo">
+      <div class="container">
+        <p>© VISTA Prototype</p>
+      </div>
+    </footer>
+
+    <script src="/static/js/app.js"></script>
+  </body>
+  </html>

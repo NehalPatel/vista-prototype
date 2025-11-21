@@ -1,0 +1,173 @@
+📄 Instruction File for AI Editor (Prototype Generation)
+
+Title: VISTA Prototype – YouTube Download + Frame Extraction + YOLO Detection
+
+📌 Objective
+
+Generate a Python script named prototype.py that performs the following tasks:
+
+Accept a YouTube video URL as input.
+
+Download the video in highest quality.
+
+Extract frames from the video (1 frame every second).
+
+Run YOLOv8 object detection on each extracted frame.
+
+Save detection result images.
+
+Save detection metadata as JSON files.
+
+Print a summary of detected objects.
+
+📌 Project Folder Structure
+
+AI should ensure the following folders are automatically created if not present:
+
+vista-prototype/
+    prototype.py
+    videos/
+    frames/
+    detections/
+    results/
+
+📌 Required Python Libraries
+
+AI editor must install (or ask user to install) these dependencies:
+
+pytube
+opencv-python
+ultralytics
+pillow
+
+📌 Features to Implement in Code
+1. YouTube Download
+
+Use pytube.YouTube
+
+Download highest resolution MP4
+
+Save file inside videos/ folder
+
+Print download success message
+
+2. Frame Extraction
+
+Use OpenCV cv2.VideoCapture
+
+Extract 1 frame per second
+
+Save as JPG in frames/ directory
+
+Filenames: frame_0001.jpg, frame_0002.jpg, etc.
+
+3. YOLOv8 Object Detection
+
+Use:
+
+from ultralytics import YOLO
+model = YOLO("yolov8n.pt")
+
+
+Detect objects in each frame
+
+Save annotated image to detections/ folder
+(use results.save() or OpenCV)
+
+Write detection data into results/frame_XXXX.json
+
+The JSON structure must be:
+
+{
+  "frame": "frame_0001.jpg",
+  "detections": [
+    {
+      "class": "person",
+      "confidence": 0.92,
+      "bbox": [x, y, w, h]
+    }
+  ]
+}
+
+4. Summary Output
+
+After finishing all frames:
+
+Count total frames processed
+
+Count detections
+
+Count per-class objects
+
+Print summary like:
+
+Processed 15 frames
+Total objects: 43
+person: 21
+car: 9
+dog: 2
+
+5. GPU Usage (Optional)
+
+If CUDA is available, the script should automatically use GPU.
+
+Example:
+
+import torch
+if torch.cuda.is_available():
+    model.to("cuda")
+
+📌 Code Requirements
+
+The AI editor must follow these coding guidelines:
+
+Use functions for each step:
+
+download_video()
+
+extract_frames()
+
+run_yolo()
+
+save_json()
+
+generate_summary()
+
+Use os.makedirs(..., exist_ok=True)
+
+Use tqdm progress bar if available (optional)
+
+Code should run end-to-end with minimal manual editing
+
+Proper error handling and clear console messages
+
+📌 Final Expected Output of Script
+
+When user runs:
+
+python prototype.py
+
+
+The script should:
+
+Ask for YouTube URL
+
+Download video
+
+Extract frames
+
+Detect objects
+
+Save detection images + JSON
+
+Print analytics summary
+
+📌 Deliverables
+
+AI editor must generate:
+
+prototype.py
+
+All required folder creation code
+
+Fully runnable pipeline

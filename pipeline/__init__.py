@@ -1,0 +1,1 @@
+"""Pipeline package: utilities, paths, video IO, and detection logic."""
