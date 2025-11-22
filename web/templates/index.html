@@ -1,91 +1,223 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>VISTA Object Detection</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
-  </head>
-  <body>
-    <header class="app-header" role="banner" aria-label="Application header">
-      <div class="container">
-        <h1 class="logo">VISTA</h1>
-        <p class="subtitle">YouTube Video Object Detection</p>
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VISTA | Video Intelligence</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+
+<body>
+  <header class="app-header">
+    <div class="container header-content">
+      <div class="brand">
+        <img src="/static/images/logo.png" alt="VISTA Logo" class="logo-img" />
+        <div class="brand-text">
+          <h1 class="logo-title">VISTA</h1>
+          <p class="logo-subtitle">Video Intelligence Search & Tagging Assistant</p>
+        </div>
       </div>
-    </header>
+      <nav class="nav-links">
+        <a href="#" class="nav-link active">Dashboard</a>
+        <a href="#" class="nav-link">History</a>
+        <a href="#" class="nav-link">Settings</a>
+      </nav>
+    </div>
+  </header>
 
-    <main class="app-main" role="main">
-      <section class="input-section" aria-labelledby="input-title">
-        <div class="container">
-          <h2 id="input-title">Process a YouTube Video</h2>
-          <form id="process-form" aria-label="Video processing form">
-            <label for="video-url" class="sr-only">YouTube URL</label>
-            <input
-              id="video-url"
-              name="video-url"
-              type="url"
-              placeholder="Enter YouTube video URL"
-              aria-required="true"
-              aria-describedby="url-help"
-              required
-            />
-            <small id="url-help" class="help-text">Provide a valid YouTube URL (e.g., https://www.youtube.com/watch?v=...)</small>
-
-            <div class="controls">
-              <label for="conf-threshold">Confidence Threshold</label>
-              <input id="conf-threshold" type="number" min="0" max="1" step="0.05" value="0.7" aria-label="Confidence threshold" />
-
-              <label for="fps">Output FPS</label>
-              <input id="fps" type="number" min="1" max="60" step="1" value="1" aria-label="Output video frames per second" />
+  <main class="app-main">
+    <section class="input-section">
+      <div class="container">
+        <div class="card input-card">
+          <div class="card-header">
+            <span class="material-symbols-rounded icon-large">youtube_activity</span>
+            <h2>Process Video</h2>
+            <p>Analyze YouTube videos for objects and metadata.</p>
+          </div>
+          <form id="process-form">
+            <div class="form-group url-group">
+              <label for="video-url" class="sr-only">YouTube URL</label>
+              <div class="input-wrapper">
+                <span class="material-symbols-rounded input-icon">link</span>
+                <input id="video-url" name="video-url" type="url" placeholder="Paste YouTube URL here..." required />
+              </div>
             </div>
 
-            <button id="process-btn" type="submit" class="btn-primary" aria-label="Start processing">Process</button>
-            <div id="status" class="status" role="status" aria-live="polite"></div>
-            <div id="error" class="alert" role="alert" aria-live="assertive" hidden></div>
-          </form>
-        </div>
-      </section>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="conf-threshold">Confidence Threshold</label>
+                <div class="input-wrapper">
+                  <span class="material-symbols-rounded input-icon">tune</span>
+                  <input id="conf-threshold" type="number" min="0" max="1" step="0.05" value="0.7" />
+                </div>
+              </div>
 
-      <section class="results-section" aria-labelledby="results-title">
-        <div class="container">
-          <h2 id="results-title">Results</h2>
-          <div id="results" class="results-grid" hidden>
-            <div class="card" id="meta-card" aria-label="Video metadata">
-              <h3>Video</h3>
-              <div class="meta">
-                <img id="thumb" alt="Video thumbnail" />
-                <div>
-                  <p><strong>Title:</strong> <span id="title"></span></p>
-                  <p><strong>Duration:</strong> <span id="duration"></span></p>
-                  <p><strong>Video ID:</strong> <span id="video-id"></span></p>
+              <div class="form-group">
+                <label for="fps">Output FPS</label>
+                <div class="input-wrapper">
+                  <span class="material-symbols-rounded input-icon">speed</span>
+                  <input id="fps" type="number" min="1" max="60" step="1" value="1" />
                 </div>
               </div>
             </div>
 
-            <div class="card" id="summary-card" aria-label="Detection summary">
-              <h3>Summary</h3>
-              <ul id="summary-list"></ul>
+            <button id="process-btn" type="submit" class="btn-primary">
+              <span class="material-symbols-rounded">play_circle</span>
+              <span>Start Processing</span>
+            </button>
+
+            <div id="status" class="status-text" role="status"></div>
+            <div id="error" class="alert-box" role="alert" hidden>
+              <span class="material-symbols-rounded">error</span>
+              <span id="error-msg"></span>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="results-section">
+      <div class="container">
+        <div id="results" class="results-grid" hidden>
+          <!-- Video Metadata Card -->
+          <div class="card meta-card">
+            <div class="card-header-small">
+              <span class="material-symbols-rounded">movie</span>
+              <h3>Video Metadata</h3>
+            </div>
+            <div class="meta-content">
+              <div class="thumb-wrapper">
+                <img id="thumb" alt="Video thumbnail" />
+                <div class="duration-badge" id="duration"></div>
+              </div>
+              <div class="meta-details">
+                <h4 id="title"></h4>
+                <p class="meta-id">ID: <span id="video-id"></span></p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Summary Card -->
+          <div class="card summary-card">
+            <div class="card-header-small">
+              <span class="material-symbols-rounded">analytics</span>
+              <h3>Analysis Summary</h3>
+            </div>
+            <ul id="summary-list" class="stats-list"></ul>
+          </div>
+
+          <!-- Outputs Card -->
+          <div class="card output-card">
+            <div class="card-header-small">
+              <span class="material-symbols-rounded">folder_open</span>
+              <h3>Export Results</h3>
+            </div>
+            <div class="action-list">
+              <a id="video-link" href="#" target="_blank" class="action-link">
+                <span class="material-symbols-rounded">videocam</span> Annotated Video
+              </a>
+              <a id="json-link" href="#" target="_blank" class="action-link">
+                <span class="material-symbols-rounded">data_object</span> JSON Results
+              </a>
+              <a id="metadata-link" href="#" target="_blank" class="action-link">
+                <span class="material-symbols-rounded">description</span> Metadata Text
+              </a>
+            </div>
+          </div>
+
+          <!-- Objects List Card (Full Width) -->
+          <div class="card objects-card">
+            <div class="card-header-small">
+              <span class="material-symbols-rounded">category</span>
+              <h3>Detected Objects</h3>
+            </div>
+            <ul id="objects-list" class="tags-list"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <div class="container">
+      <p>&copy; 2025 VISTA Project. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <!-- Modal -->
+  <div id="object-modal" class="modal-overlay" aria-hidden="true" hidden>
+    <div class="modal">
+      <header class="modal-header">
+        <div class="modal-title-group">
+          <span class="material-symbols-rounded">image_search</span>
+          <h3 id="modal-title">Object Name</h3>
+        </div>
+        <button id="modal-close" class="btn-icon" aria-label="Close">
+          <span class="material-symbols-rounded">close</span>
+        </button>
+      </header>
+
+      <div class="modal-body">
+        <div class="modal-main-view">
+          <div id="image-container" class="image-viewer">
+            <img id="modal-image" alt="Detected frame" />
+            <div id="modal-loading" class="loading" hidden>
+              <div class="spinner"></div>
+              <span>Loading Frame...</span>
+            </div>
+            <div id="modal-error" class="alert-box" hidden></div>
+          </div>
+
+          <div class="viewer-controls">
+            <div class="control-group">
+              <button id="prev-frame" class="btn-secondary" title="Previous Frame">
+                <span class="material-symbols-rounded">chevron_left</span>
+              </button>
+              <span id="frame-counter" class="counter-text">0 / 0</span>
+              <button id="next-frame" class="btn-secondary" title="Next Frame">
+                <span class="material-symbols-rounded">chevron_right</span>
+              </button>
             </div>
 
-            <div class="card" id="output-card" aria-label="Output files">
-              <h3>Outputs</h3>
-              <ul>
-                <li><a id="video-link" href="#" target="_blank" rel="noopener">Annotated Video</a></li>
-                <li><a id="json-link" href="#" target="_blank" rel="noopener">Detection Results (JSON)</a></li>
-                <li><a id="metadata-link" href="#" target="_blank" rel="noopener">Metadata</a></li>
-              </ul>
+            <div class="control-group">
+              <button id="zoom-out" class="btn-secondary" title="Zoom Out">
+                <span class="material-symbols-rounded">remove</span>
+              </button>
+              <button id="zoom-in" class="btn-secondary" title="Zoom In">
+                <span class="material-symbols-rounded">add</span>
+              </button>
+              <a id="export-frame" class="btn-primary small" download>
+                <span class="material-symbols-rounded">download</span> Export
+              </a>
             </div>
           </div>
         </div>
-      </section>
-    </main>
 
-    <footer class="app-footer" role="contentinfo">
-      <div class="container">
-        <p>© VISTA Prototype</p>
+        <div class="modal-sidebar">
+          <div class="sidebar-section">
+            <h4>Detection Details</h4>
+            <ul id="modal-details" class="details-list"></ul>
+          </div>
+          <div class="sidebar-section">
+            <h4>Frame Timeline</h4>
+            <div id="modal-frame-list" class="frame-list-scroll"></div>
+          </div>
+          <div class="sidebar-section">
+            <h4>Thumbnails</h4>
+            <div id="thumb-strip" class="thumb-strip"></div>
+          </div>
+        </div>
       </div>
-    </footer>
+    </div>
+  </div>
 
-    <script src="/static/js/app.js"></script>
-  </body>
-  </html>
+  <script src="/static/js/app.js"></script>
+</body>
+
+</html>

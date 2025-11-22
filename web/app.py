@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
 # Ensure the parent directory is on sys.path for 'pipeline' imports
@@ -92,14 +93,41 @@ def api_process():
     if not ensure_video_results_dirs(video_id):
         return jsonify({"error": "Failed to create results directories"}), 500
 
-    # Prevent overwrite
     if os.path.exists(paths['detection_json']) or (
         os.path.isdir(paths['processed_frames']) and any(os.scandir(paths['processed_frames']))
     ):
+        meta = get_video_metadata(url)
+        total_frames = 0
+        total_dets = 0
+        by_class = {}
+        conf_used = conf_threshold
+        try:
+            with open(paths['detection_json'], 'r', encoding='utf-8') as f:
+                dj = json.load(f)
+            frames_list = dj.get('frames') or []
+            results_by_frame = { (fr.get('frame') or ''): (fr.get('detections') or []) for fr in frames_list }
+            total_dets, by_class = generate_summary(results_by_frame)
+            total_frames = len(results_by_frame)
+            conf_used = dj.get('confidence_threshold', conf_used)
+        except Exception:
+            pass
+
         return jsonify({
-            "error": f"Existing results found for video_id '{video_id}'. Remove them or use a different URL.",
-            "video_id": video_id
-        }), 409
+            "status": "cached",
+            "video_id": video_id,
+            "metadata": meta,
+            "summary": {
+                "total_frames": total_frames,
+                "total_detections": total_dets,
+                "by_class": by_class,
+                "confidence_threshold": conf_used,
+            },
+            "results": {
+                "output_video_url": f"/results/{video_id}/detections_video.mp4",
+                "detection_json_url": f"/results/{video_id}/detection_results.json",
+                "metadata_url": f"/results/{video_id}/metadata.txt",
+            }
+        })
 
     # Optional metadata
     meta = get_video_metadata(url)

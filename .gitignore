@@ -6,17 +6,22 @@ __pycache__/
 
 # Virtual environment
 venv/
+env/
 
 # OS/Editor files
 .DS_Store
 Thumbs.db
 .vscode/
+.idea/
 
 # Logs
 *.log
 
 # Model weights
 *.pt
+
+# Node
+node_modules/
 
 # Pipeline outputs (generated)
 vista-prototype/frames/
