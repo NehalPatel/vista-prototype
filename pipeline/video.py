@@ -73,6 +73,14 @@ def extract_frames(video_path: str, frames_dir: str) -> List[str]:
     Returns a list of saved frame filenames (basename only).
     """
     safe_print("Extracting frames (1 per second)...")
+    
+    # Clear existing frames to prevent merging with previous runs
+    if os.path.exists(frames_dir):
+        for f in os.listdir(frames_dir):
+            fp = os.path.join(frames_dir, f)
+            if os.path.isfile(fp):
+                os.remove(fp)
+
     saved_frames: List[str] = []
 
     cap = cv2.VideoCapture(video_path)
