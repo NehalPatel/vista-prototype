@@ -50,47 +50,72 @@
               </div>
             </div>
 
-            <div class="form-row form-row-4">
-              <div class="form-group">
-                <label for="object-model">Object Detection Model</label>
-                <div class="input-wrapper">
-                  <span class="material-symbols-rounded input-icon">category</span>
-                  <select id="object-model" name="object-model" aria-describedby="object-model-desc">
-                    <option value="yolov8n">YOLOv8 Nano (fastest, ~3M params)</option>
-                    <option value="yolov8s">YOLOv8 Small (~11M params)</option>
-                    <option value="yolov8m">YOLOv8 Medium (~26M params)</option>
-                    <option value="yolov8l">YOLOv8 Large (~44M params)</option>
-                    <option value="yolov8x">YOLOv8 Extra-large (best accuracy, ~68M params)</option>
-                  </select>
+            <div class="form-groups">
+              <fieldset class="form-group-set" aria-labelledby="models-legend">
+                <legend id="models-legend" class="group-legend">
+                  <span class="material-symbols-rounded">tune</span>
+                  Detection models
+                </legend>
+                <div class="form-row form-row-2">
+                  <div class="form-group">
+                    <label for="object-model">Object detection model</label>
+                    <div class="input-wrapper">
+                      <span class="material-symbols-rounded input-icon">category</span>
+                      <select id="object-model" name="object-model" aria-describedby="object-model-desc">
+                        <option value="yolov8n">YOLOv8 Nano (fastest, ~3M params)</option>
+                        <option value="yolov8s">YOLOv8 Small (~11M params)</option>
+                        <option value="yolov8m">YOLOv8 Medium (~26M params)</option>
+                        <option value="yolov8l">YOLOv8 Large (~44M params)</option>
+                        <option value="yolov8x">YOLOv8 Extra-large (best accuracy, ~68M params)</option>
+                      </select>
+                    </div>
+                    <p id="object-model-desc" class="input-hint">Ultralytics YOLOv8. Larger = more accurate, slower.</p>
+                  </div>
+                  <div class="form-group">
+                    <label for="face-model">Face detection model</label>
+                    <div class="input-wrapper">
+                      <span class="material-symbols-rounded input-icon">face</span>
+                      <select id="face-model" name="face-model" aria-describedby="face-model-desc">
+                        <option value="buffalo_l">Buffalo L (best accuracy, ~326MB)</option>
+                        <option value="buffalo_s">Buffalo S (smaller, ~159MB)</option>
+                        <option value="buffalo_sc">Buffalo SC (smallest, ~16MB)</option>
+                      </select>
+                    </div>
+                    <p id="face-model-desc" class="input-hint">Used for face detection (e.g. fusion). InsightFace SCRFD.</p>
+                  </div>
                 </div>
-                <p id="object-model-desc" class="input-hint">Ultralytics YOLOv8. Larger = more accurate, slower.</p>
-              </div>
-              <div class="form-group">
-                <label for="conf-threshold">Confidence Threshold</label>
-                <div class="input-wrapper">
-                  <span class="material-symbols-rounded input-icon">tune</span>
-                  <input id="conf-threshold" type="number" min="0" max="1" step="0.05" value="0.7" />
+              </fieldset>
+              <fieldset class="form-group-set" aria-labelledby="processing-legend">
+                <legend id="processing-legend" class="group-legend">
+                  <span class="material-symbols-rounded">speed</span>
+                  Processing
+                </legend>
+                <div class="form-row form-row-2">
+                  <div class="form-group">
+                    <label for="conf-threshold">Confidence threshold</label>
+                    <div class="input-wrapper">
+                      <span class="material-symbols-rounded input-icon">tune</span>
+                      <input id="conf-threshold" type="number" min="0" max="1" step="0.05" value="0.7" />
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label for="fps">Output FPS</label>
+                    <div class="input-wrapper">
+                      <span class="material-symbols-rounded input-icon">speed</span>
+                      <input id="fps" type="number" min="1" max="60" step="1" value="1" />
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div class="form-group">
-                <label for="fps">Output FPS</label>
-                <div class="input-wrapper">
-                  <span class="material-symbols-rounded input-icon">speed</span>
-                  <input id="fps" type="number" min="1" max="60" step="1" value="1" />
+                <div class="system-info-block" id="system-info-block">
+                  <h4 class="system-info-heading">
+                    <span class="material-symbols-rounded">computer</span>
+                    System
+                  </h4>
+                  <ul class="system-info-list" id="system-info-list">
+                    <li>Loading…</li>
+                  </ul>
                 </div>
-              </div>
-              <div class="form-group">
-                <label for="face-model">Face Detection Model</label>
-                <div class="input-wrapper">
-                  <span class="material-symbols-rounded input-icon">face</span>
-                  <select id="face-model" name="face-model" aria-describedby="face-model-desc">
-                    <option value="buffalo_l">Buffalo L (best accuracy, ~326MB)</option>
-                    <option value="buffalo_s">Buffalo S (smaller, ~159MB)</option>
-                    <option value="buffalo_sc">Buffalo SC (smallest, ~16MB)</option>
-                  </select>
-                </div>
-                <p id="face-model-desc" class="input-hint">Used for face detection (e.g. fusion). InsightFace SCRFD.</p>
-              </div>
+              </fieldset>
             </div>
 
             <label class="checkbox-wrap">
@@ -231,7 +256,6 @@
                 <span class="material-symbols-rounded">chevron_right</span>
               </button>
             </div>
-
             <div class="control-group">
               <button id="zoom-out" class="btn-secondary" title="Zoom Out">
                 <span class="material-symbols-rounded">remove</span>
@@ -243,21 +267,32 @@
                 <span class="material-symbols-rounded">download</span> Export
               </a>
             </div>
+          </div>
+        </div>
 
-        <div class="modal-sidebar">
+        <aside class="modal-sidebar">
           <div class="sidebar-section">
-            <h4>Detection Details</h4>
+            <h4 class="sidebar-heading">
+              <span class="material-symbols-rounded">info</span>
+              Detection details
+            </h4>
             <ul id="modal-details" class="details-list"></ul>
           </div>
           <div class="sidebar-section">
-            <h4>Frame Timeline</h4>
+            <h4 class="sidebar-heading">
+              <span class="material-symbols-rounded">schedule</span>
+              Frame timeline
+            </h4>
             <div id="modal-frame-list" class="frame-list-scroll"></div>
           </div>
           <div class="sidebar-section">
-            <h4>Thumbnails</h4>
+            <h4 class="sidebar-heading">
+              <span class="material-symbols-rounded">collections</span>
+              Thumbnails
+            </h4>
             <div id="thumb-strip" class="thumb-strip"></div>
           </div>
-        </div>
+        </aside>
       </div>
     </div>
   </div>

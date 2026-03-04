@@ -35,6 +35,7 @@ const modalErrorEl = document.getElementById('modal-error');
 const modalFrameListEl = document.getElementById('modal-frame-list');
 const frameCounterEl = document.getElementById('frame-counter');
 const thumbStripEl = document.getElementById('thumb-strip');
+const systemInfoListEl = document.getElementById('system-info-list');
 
 let lastActiveElement = null;
 let focusableModalEls = [];
@@ -63,6 +64,33 @@ function formatFaceModelLabel(value) {
 function formatObjectModelLabel(value) {
   const labels = { yolov8n: 'YOLOv8 Nano', yolov8s: 'YOLOv8 Small', yolov8m: 'YOLOv8 Medium', yolov8l: 'YOLOv8 Large', yolov8x: 'YOLOv8 Extra-large' };
   return labels[value] || value || '—';
+}
+
+function formatDuration(sec) {
+  if (sec == null || typeof sec !== 'number') return '—';
+  if (sec < 60) return sec.toFixed(1) + ' s';
+  const m = Math.floor(sec / 60);
+  const s = (sec % 60).toFixed(1);
+  return m + ' m ' + s + ' s';
+}
+
+function buildSummaryItems(sum, objectModelSelect, faceModelSelect, runStats) {
+  const items = [
+    ['Confidence threshold', sum.confidence_threshold],
+    ['Total frames', sum.total_frames],
+    ['Total detections', sum.total_detections],
+    ['Object model', sum.object_model ? formatObjectModelLabel(sum.object_model) : (objectModelSelect ? formatObjectModelLabel(objectModelSelect.value) : '—')],
+    ['Face detection model', sum.face_model ? formatFaceModelLabel(sum.face_model) : (faceModelSelect ? formatFaceModelLabel(faceModelSelect.value) : '—')],
+  ];
+  if (runStats && typeof runStats === 'object') {
+    items.push(['Total time', formatDuration(runStats.total_sec)]);
+    items.push(['Download', formatDuration(runStats.download_sec)]);
+    items.push(['Detection', formatDuration(runStats.detection_sec)]);
+    items.push(['Render', formatDuration(runStats.render_sec)]);
+    items.push(['Device', runStats.device === 'cuda' ? 'GPU (CUDA)' : 'CPU']);
+    if (runStats.gpu_name) items.push(['Graphics card', runStats.gpu_name]);
+  }
+  return items;
 }
 
 /** Reliable YouTube thumbnail URL (same-origin friendly, no referrer issues). */
@@ -146,15 +174,9 @@ form.addEventListener('submit', async (e) => {
     if (out.detection_json_url) jsonLinkEl.href = out.detection_json_url;
     if (out.metadata_url) metadataLinkEl.href = out.metadata_url;
 
-    // Summary list (include models used)
+    // Summary list (include models and run stats when available)
     summaryListEl.innerHTML = '';
-    const items = [
-      ['Confidence threshold', sum.confidence_threshold],
-      ['Total frames', sum.total_frames],
-      ['Total detections', sum.total_detections],
-      ['Object model', sum.object_model ? formatObjectModelLabel(sum.object_model) : (objectModelSelect ? formatObjectModelLabel(objectModelSelect.value) : '—')],
-      ['Face detection model', sum.face_model ? formatFaceModelLabel(sum.face_model) : (faceModelSelect ? formatFaceModelLabel(faceModelSelect.value) : '—')],
-    ];
+    const items = buildSummaryItems(sum, objectModelSelect, faceModelSelect, sum.run_stats);
     for (const [label, value] of items) {
       const li = document.createElement('li');
       li.textContent = label + ': ' + (value ?? '—');
@@ -215,13 +237,14 @@ async function renderResultsFromVideoId(videoId) {
       }
     }
     summaryListEl.innerHTML = '';
-    const items = [
-      ['Confidence threshold', djData.confidence_threshold],
-      ['Total frames', totalFrames],
-      ['Total detections', totalDetections],
-      ['Object model', formatObjectModelLabel(djData.object_model || (objectModelSelect ? objectModelSelect.value : 'yolov8n'))],
-      ['Face detection model', formatFaceModelLabel(djData.face_model || (faceModelSelect ? faceModelSelect.value : 'buffalo_l'))],
-    ];
+    const sumForSummary = {
+      confidence_threshold: djData.confidence_threshold,
+      total_frames: totalFrames,
+      total_detections: totalDetections,
+      object_model: djData.object_model || (objectModelSelect ? objectModelSelect.value : 'yolov8n'),
+      face_model: djData.face_model || (faceModelSelect ? faceModelSelect.value : 'buffalo_l'),
+    };
+    const items = buildSummaryItems(sumForSummary, objectModelSelect, faceModelSelect, djData.run_stats);
     for (const [label, value] of items) {
       const li = document.createElement('li');
       li.textContent = `${label}: ${value ?? '—'}`;
@@ -306,6 +329,7 @@ function openModalForClass(cls) {
         img.alt = `Frame ${i+1}`;
         img.setAttribute('role','listitem');
         img.tabIndex = 0;
+        img.dataset.index = String(i);
         img.addEventListener('click', () => { currentIndex = i; loadCurrentFrame(); img.focus(); });
         img.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); currentIndex = i; loadCurrentFrame(); } });
         thumbStripEl.appendChild(img);
@@ -354,33 +378,23 @@ function loadCurrentFrame() {
   modalDetailsEl.innerHTML = '';
   if (frameCounterEl) {
     const total = currentFrames.length;
-    frameCounterEl.textContent = `Frame ${currentIndex+1} of ${total}`;
+    frameCounterEl.textContent = `Frame ${currentIndex + 1} of ${total}`;
   }
   const tsLi = document.createElement('li');
-  tsLi.textContent = `Timestamp: ${formatTimestampFromFrame(fname)}`;
+  tsLi.innerHTML = '<strong>Timestamp</strong>: ' + formatTimestampFromFrame(fname);
   modalDetailsEl.appendChild(tsLi);
-  const dets = (objectsIndex[currentClass]||{})[fname] || [];
+  const dets = (objectsIndex[currentClass] || {})[fname] || [];
   for (const d of dets) {
     const li = document.createElement('li');
     const b = (d.bbox || []).map(v => Math.round(Number(v) || 0));
-    const fullText = `bbox: [${b.join(', ')}], conf: ${typeof d.conf==='number'?d.conf.toFixed(3):String(d.conf)}`;
-    const truncated = fullText.length > 200 ? fullText.slice(0,200) + '…' : fullText;
-    const span = document.createElement('span');
-    span.textContent = truncated;
-    li.appendChild(span);
-    if (fullText.length > 200) {
-      const btn = document.createElement('button');
-      btn.className = 'btn-secondary';
-      btn.style.marginLeft = '0.5rem';
-      btn.textContent = 'Show more';
-      btn.addEventListener('click', () => {
-        const expanded = span.textContent === fullText;
-        span.textContent = expanded ? truncated : fullText;
-        btn.textContent = expanded ? 'Show more' : 'Show less';
-      });
-      li.appendChild(btn);
-    }
+    const confStr = typeof d.conf === 'number' ? d.conf.toFixed(3) : String(d.conf);
+    li.innerHTML = '<strong>bbox</strong>: [' + b.join(', ') + ']<br><strong>conf</strong>: ' + confStr;
     modalDetailsEl.appendChild(li);
+  }
+  if (thumbStripEl) {
+    thumbStripEl.querySelectorAll('img').forEach((img, i) => {
+      img.classList.toggle('active', i === currentIndex);
+    });
   }
 }
 
@@ -416,3 +430,27 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+// Load system info (Python, CPU, GPU) on page load
+async function loadSystemInfo() {
+  if (!systemInfoListEl) return;
+  try {
+    const res = await fetch('/api/system-info');
+    const data = await res.json();
+    systemInfoListEl.innerHTML = '';
+    const entries = [
+      ['Python', data.python_version || '—'],
+      ['CPU', data.cpu || '—'],
+      ['Graphics', data.gpu || '—'],
+    ];
+    for (const [label, value] of entries) {
+      const li = document.createElement('li');
+      li.className = 'system-info-item';
+      li.innerHTML = '<strong>' + label + '</strong>: ' + (value || '—');
+      systemInfoListEl.appendChild(li);
+    }
+  } catch (err) {
+    systemInfoListEl.innerHTML = '<li class="system-info-item">Unable to load system info</li>';
+  }
+}
+loadSystemInfo();

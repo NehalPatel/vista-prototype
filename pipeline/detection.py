@@ -7,7 +7,7 @@ This module provides:
 - write_metadata: writes a text metadata file
 """
 
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 import os
 import json
 
@@ -158,17 +158,22 @@ def save_detection_results(
     video_id: str,
     conf_threshold: float,
     object_model: str = "yolov8n",
+    face_model: str = "buffalo_l",
+    run_stats: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Write a single JSON file containing all detections for the video."""
     payload: Dict[str, Any] = {
         "video_id": video_id,
         "confidence_threshold": conf_threshold,
         "object_model": object_model,
+        "face_model": face_model,
         "frames": [
             {"frame": frame, "detections": dets}
             for frame, dets in sorted(results_by_frame.items())
         ],
     }
+    if run_stats is not None:
+        payload["run_stats"] = run_stats
     with open(output_json_path, "w", encoding="utf-8") as f:
         json.dump(payload, f)
 

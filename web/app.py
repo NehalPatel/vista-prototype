@@ -2,6 +2,9 @@ import os
 import sys
 import json
 import shutil
+import platform
+import time
+import subprocess
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
 # Ensure the parent directory is on sys.path for 'pipeline' imports
@@ -56,6 +59,39 @@ def serve_results(filename: str):
     return send_from_directory(RESULTS_BASE, filename)
 
 
+def get_system_info():
+    """Return Python version, CPU name, and GPU name (if available)."""
+    python_version = platform.python_version()
+    cpu_name = platform.processor() or "—"
+    if sys.platform == "win32" and (not cpu_name or cpu_name.strip() == ""):
+        try:
+            out = subprocess.check_output(
+                ["wmic", "cpu", "get", "name"],
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+                timeout=5,
+            )
+            lines = out.decode("utf-8", errors="replace").strip().splitlines()
+            if len(lines) >= 2:
+                cpu_name = lines[1].strip() or cpu_name
+        except Exception:
+            pass
+    gpu_name = "—"
+    try:
+        import torch  # type: ignore
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0) or "CUDA GPU"
+    except Exception:
+        pass
+    return {
+        "python_version": python_version,
+        "cpu": cpu_name,
+        "gpu": gpu_name,
+    }
+
+
+@app.route("/api/system-info", methods=["GET"])
+def api_system_info():
+    return jsonify(get_system_info())
 
 
 def get_video_metadata(url: str):
@@ -166,10 +202,13 @@ def api_process():
 
     # Optional metadata
     meta = get_video_metadata(url)
+    run_stats = {}
 
     try:
         # Download video (required)
+        t0 = time.perf_counter()
         video_path = download_video(url, VIDEOS_DIR)
+        run_stats["download_sec"] = round(time.perf_counter() - t0, 2)
         if not video_path or not os.path.isfile(video_path):
             return jsonify({
                 "error": "Video download failed. Try again or use a different URL; some videos may be restricted.",
@@ -179,7 +218,9 @@ def api_process():
         # Per-video frames directory so we only process this video's frames
         frames_dir_this_video = os.path.join(FRAMES_DIR, video_id)
         os.makedirs(frames_dir_this_video, exist_ok=True)
+        t1 = time.perf_counter()
         saved_frames = extract_frames(video_path, frames_dir_this_video)
+        run_stats["extract_frames_sec"] = round(time.perf_counter() - t1, 2)
 
         if not saved_frames:
             return jsonify({
@@ -189,31 +230,30 @@ def api_process():
 
         # Run detection with selected object model (resolve path; Ultralytics downloads if missing)
         model_path = _resolve_model_path(object_model, BASE_DIR)
+        t2 = time.perf_counter()
         results_by_frame = run_yolo(
             frames_dir=frames_dir_this_video,
             detections_dir=paths['processed_frames'],
             model_path=model_path,
             conf_threshold=conf_threshold,
         )
+        run_stats["detection_sec"] = round(time.perf_counter() - t2, 2)
 
         total_dets, by_class = generate_summary(results_by_frame)
         total_frames = len(results_by_frame)
 
-        save_detection_results(
-            results_by_frame=results_by_frame,
-            output_json_path=paths['detection_json'],
-            video_id=video_id,
-            conf_threshold=conf_threshold,
-            object_model=object_model,
-        )
-
-        # Metadata file
-        device = 'cpu'
+        # Device used for detection
+        device = "cpu"
+        gpu_name = None
         try:
             import torch  # type: ignore
-            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            if torch.cuda.is_available():
+                device = "cuda"
+                gpu_name = torch.cuda.get_device_name(0)
         except Exception:
-            device = 'cpu'
+            pass
+        run_stats["device"] = device
+        run_stats["gpu_name"] = gpu_name
 
         write_metadata(
             metadata_path=paths['metadata_txt'],
@@ -228,8 +268,24 @@ def api_process():
         )
 
         # Render video
+        t3 = time.perf_counter()
         out_video = os.path.join(paths['base'], 'detections_video.mp4')
         make_video_from_images(paths['processed_frames'], out_video, fps=fps)
+        run_stats["render_sec"] = round(time.perf_counter() - t3, 2)
+        run_stats["total_sec"] = round(
+            run_stats["download_sec"] + run_stats["extract_frames_sec"]
+            + run_stats["detection_sec"] + run_stats["render_sec"], 2
+        )
+
+        save_detection_results(
+            results_by_frame=results_by_frame,
+            output_json_path=paths['detection_json'],
+            video_id=video_id,
+            conf_threshold=conf_threshold,
+            object_model=object_model,
+            face_model=payload.get("face_model", "buffalo_l"),
+            run_stats=run_stats,
+        )
 
         return jsonify({
             "status": "completed",
@@ -242,6 +298,7 @@ def api_process():
                 "confidence_threshold": conf_threshold,
                 "object_model": object_model,
                 "face_model": payload.get("face_model", "buffalo_l"),
+                "run_stats": run_stats,
             },
             "results": {
                 "output_video_url": f"/results/{video_id}/detections_video.mp4",
