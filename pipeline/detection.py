@@ -78,18 +78,33 @@ def _resolve_model_path(model_key: str, base_dir: str = "") -> str:
     return name
 
 
+def _inference_device() -> str:
+    """Return 'cuda' if a CUDA GPU is available, else 'cpu'. Uses PyTorch."""
+    try:
+        import torch  # type: ignore
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+    return "cpu"
+
+
 def run_yolo(
     frames_dir: str,
     detections_dir: str,
     model_path: str = "yolov8n.pt",
     conf_threshold: float = 0.7,
+    device: Optional[str] = None,
 ) -> Dict[str, List[Dict]]:
     """Run YOLOv8 on frames, save annotated images, and return filtered detections.
 
     Only detections with confidence >= conf_threshold are included.
     model_path: e.g. yolov8n.pt (Ultralytics will download if missing).
+    device: 'cuda', 'cpu', or None to auto-detect (prefer CUDA if available).
     """
     os.makedirs(detections_dir, exist_ok=True)
+    if device is None:
+        device = _inference_device()
     model = YOLO(model_path)
     results_by_frame: Dict[str, List[Dict]] = {}
 
@@ -102,7 +117,7 @@ def run_yolo(
         frame_bgr = cv2.imread(frame_path)
         if frame_bgr is None:
             continue
-        result = model(frame_path)
+        result = model(frame_path, device=device)
         detections: List[Dict] = []
         boxes = result[0].boxes
         names = result[0].names or {}
@@ -160,17 +175,24 @@ def save_detection_results(
     object_model: str = "yolov8n",
     face_model: str = "buffalo_l",
     run_stats: Optional[Dict[str, Any]] = None,
+    faces_by_frame: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> None:
-    """Write a single JSON file containing all detections for the video."""
+    """Write a single JSON file containing all detections (and optional faces) for the video."""
+    fbf = faces_by_frame or {}
+    frames_payload = []
+    for frame, dets in sorted(results_by_frame.items()):
+        entry: Dict[str, Any] = {"frame": frame, "detections": dets}
+        if frame in fbf:
+            entry["faces"] = fbf[frame]
+        else:
+            entry["faces"] = []
+        frames_payload.append(entry)
     payload: Dict[str, Any] = {
         "video_id": video_id,
         "confidence_threshold": conf_threshold,
         "object_model": object_model,
         "face_model": face_model,
-        "frames": [
-            {"frame": frame, "detections": dets}
-            for frame, dets in sorted(results_by_frame.items())
-        ],
+        "frames": frames_payload,
     }
     if run_stats is not None:
         payload["run_stats"] = run_stats

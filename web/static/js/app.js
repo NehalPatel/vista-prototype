@@ -2,6 +2,8 @@ const form = document.getElementById('process-form');
 const urlInput = document.getElementById('video-url');
 const thresholdInput = document.getElementById('conf-threshold');
 const fpsInput = document.getElementById('fps');
+const scanStartInput = document.getElementById('scan-start');
+const scanEndInput = document.getElementById('scan-end');
 const forceRescanInput = document.getElementById('force-rescan');
 const objectModelSelect = document.getElementById('object-model');
 const faceModelSelect = document.getElementById('face-model');
@@ -79,6 +81,7 @@ function buildSummaryItems(sum, objectModelSelect, faceModelSelect, runStats) {
     ['Confidence threshold', sum.confidence_threshold],
     ['Total frames', sum.total_frames],
     ['Total detections', sum.total_detections],
+    ['Total face detections', sum.total_face_detections != null ? sum.total_face_detections : '—'],
     ['Object model', sum.object_model ? formatObjectModelLabel(sum.object_model) : (objectModelSelect ? formatObjectModelLabel(objectModelSelect.value) : '—')],
     ['Face detection model', sum.face_model ? formatFaceModelLabel(sum.face_model) : (faceModelSelect ? formatFaceModelLabel(faceModelSelect.value) : '—')],
   ];
@@ -99,6 +102,25 @@ function youtubeThumbUrl(videoId) {
   return 'https://img.youtube.com/vi/' + encodeURIComponent(videoId) + '/hqdefault.jpg';
 }
 
+/**
+ * Parse scan start/end input to total seconds.
+ * - "6.30" → 6 min 30 sec = 390; "6.3" → same (3 = 30 sec)
+ * - "3.00" → 180, "0" or "0.00" → 0
+ * - "180" (no dot) → 180 seconds
+ */
+function parseTimeToSeconds(value, defaultSeconds) {
+  const str = String(value || '').trim();
+  if (str === '') return defaultSeconds != null ? defaultSeconds : 0;
+  if (str.includes('.')) {
+    const parts = str.split('.');
+    const min = Math.max(0, parseInt(parts[0], 10) || 0);
+    const secStr = (parts[1] || '0').padEnd(2, '0').slice(0, 2);
+    const sec = Math.min(59, Math.max(0, parseInt(secStr, 10) || 0));
+    return min * 60 + sec;
+  }
+  return Math.max(0, parseInt(str, 10) || 0);
+}
+
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   errorEl.hidden = true;
@@ -112,10 +134,15 @@ form.addEventListener('submit', async (e) => {
   thumbEl.src = '';
   thumbEl.alt = 'Video thumbnail';
 
+  const scanStart = scanStartInput ? parseTimeToSeconds(scanStartInput.value, 0) : 0;
+  const scanEnd = scanEndInput ? parseTimeToSeconds(scanEndInput.value, scanStart + 180) : (scanStart + 180);
+
   const payload = {
     url: urlInput.value.trim(),
     conf_threshold: parseFloat(thresholdInput.value),
     fps: parseInt(fpsInput.value, 10),
+    scan_start_seconds: scanStart,
+    scan_end_seconds: scanEnd,
     force_rescan: forceRescanInput ? forceRescanInput.checked : false,
     object_model: objectModelSelect ? objectModelSelect.value : 'yolov8n',
     face_model: faceModelSelect ? faceModelSelect.value : 'buffalo_l',
@@ -225,6 +252,7 @@ async function renderResultsFromVideoId(videoId) {
     for (const f of framesArr) {
       const fname = f.frame;
       const dets = Array.isArray(f.detections) ? f.detections : [];
+      const faces = Array.isArray(f.faces) ? f.faces : [];
       map[fname] = dets;
       totalFrames += 1;
       totalDetections += dets.length;
@@ -235,12 +263,19 @@ async function renderResultsFromVideoId(videoId) {
         if (!objectsIndex[cls][fname]) objectsIndex[cls][fname] = [];
         objectsIndex[cls][fname].push({ bbox: d.bbox, conf: d.conf });
       }
+      if (faces.length) {
+        byClass['face'] = (byClass['face'] || 0) + faces.length;
+        if (!objectsIndex['face']) objectsIndex['face'] = {};
+        objectsIndex['face'][fname] = faces.map((fa) => ({ bbox: fa.bbox, conf: fa.confidence }));
+      }
     }
     summaryListEl.innerHTML = '';
+    const totalFaceDetections = (djData.frames || []).reduce((acc, fr) => acc + (Array.isArray(fr.faces) ? fr.faces.length : 0), 0);
     const sumForSummary = {
       confidence_threshold: djData.confidence_threshold,
       total_frames: totalFrames,
       total_detections: totalDetections,
+      total_face_detections: totalFaceDetections,
       object_model: djData.object_model || (objectModelSelect ? objectModelSelect.value : 'yolov8n'),
       face_model: djData.face_model || (faceModelSelect ? faceModelSelect.value : 'buffalo_l'),
     };
@@ -259,7 +294,7 @@ async function renderResultsFromVideoId(videoId) {
       li.setAttribute('role','button');
       li.setAttribute('tabindex','0');
       li.dataset.cls = cls;
-      li.textContent = `${cls} (${count})`;
+      li.textContent = `${displayLabelForClass(cls)} (${count})`;
       li.addEventListener('click', () => openModalForClass(cls));
       li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openModalForClass(cls); } });
       objectsListEl.appendChild(li);
@@ -287,6 +322,12 @@ function formatTimestampFromFrame(name) {
   return [h, m, s].map((v)=>String(v).padStart(2,'0')).join(':');
 }
 
+function displayLabelForClass(cls) {
+  if (typeof cls !== 'string') return cls;
+  if (cls.toLowerCase() === 'face') return 'Face';
+  return cls.charAt(0).toUpperCase() + cls.slice(1).toLowerCase();
+}
+
 function openModalForClass(cls) {
   if (!modalEl || !modalTitleEl) return;
   currentClass = cls;
@@ -294,7 +335,7 @@ function openModalForClass(cls) {
   currentFrames = Object.keys(framesMap).sort();
   currentIndex = 0;
   zoomLevel = 1;
-  modalTitleEl.textContent = cls;
+  modalTitleEl.textContent = displayLabelForClass(cls);
   modalImageEl.style.transform = 'scale(1)';
   lastActiveElement = document.activeElement;
   modalEl.hidden = false;
@@ -454,3 +495,17 @@ async function loadSystemInfo() {
   }
 }
 loadSystemInfo();
+
+// Keep scan end >= scan start; when start changes, if end <= start set end = start + 180
+if (scanStartInput && scanEndInput) {
+  scanStartInput.addEventListener('input', function () {
+    const s = parseTimeToSeconds(scanStartInput.value, 0);
+    const e = parseTimeToSeconds(scanEndInput.value, s + 180);
+    if (e <= s) scanEndInput.value = String(s + 180);
+  });
+  scanEndInput.addEventListener('input', function () {
+    const s = parseTimeToSeconds(scanStartInput.value, 0);
+    const e = parseTimeToSeconds(scanEndInput.value, s + 180);
+    if (e <= s) scanEndInput.value = String(s + 180);
+  });
+}

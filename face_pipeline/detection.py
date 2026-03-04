@@ -41,37 +41,56 @@ def load_detector(
     return app
 
 
-def detect_faces(detector, frame_bgr: np.ndarray, conf_thresh: float = 0.8) -> List[Dict[str, Any]]:
+def _get_face_attr(face: Any, key: str, default: Any = None) -> Any:
+    """Get attribute from InsightFace Face object (supports both object and dict-like access)."""
+    v = getattr(face, key, None)
+    if v is not None:
+        return v
+    try:
+        return face[key]
+    except (KeyError, TypeError):
+        return default
+
+
+def detect_faces(detector, frame_bgr: np.ndarray, conf_thresh: float = 0.5) -> List[Dict[str, Any]]:
     """Run face detection and extract bbox, confidence, and landmarks when available.
 
     Returns list of dicts: {bbox, confidence, landmarks(optional), face_obj}
+    InsightFace Face objects may be object- or dict-like; we support both.
     """
     faces = detector.get(frame_bgr)
     results: List[Dict[str, Any]] = []
     h, w = frame_bgr.shape[:2]
     for f in faces:
-        score = float(getattr(f, "det_score", 1.0))
+        score = _get_face_attr(f, "det_score", 1.0)
+        if score is None:
+            score = 1.0
+        score = float(score)
         if score < conf_thresh:
             continue
-        bbox = getattr(f, "bbox", None)
+        bbox = _get_face_attr(f, "bbox", None)
         if bbox is None:
-            # Some versions expose bbox via .bbox as np.ndarray [x1, y1, x2, y2]
             continue
-        x1, y1, x2, y2 = [int(max(0, min(v, (w if i % 2 == 0 else h)))) for i, v in enumerate(bbox)]
+        # Handle numpy array or list
+        bbox = getattr(bbox, "tolist", lambda: bbox)() if hasattr(bbox, "tolist") else list(bbox)
+        if len(bbox) < 4:
+            continue
+        x1, y1, x2, y2 = [int(max(0, min(v, (w if i % 2 == 0 else h)))) for i, v in enumerate(bbox[:4])]
         record: Dict[str, Any] = {
             "bbox": [x1, y1, x2, y2],
             "confidence": score,
             "face_obj": f,
         }
-        # Try 5-point landmarks; else skip
-        lm5 = getattr(f, "landmark_5", None)
-        if lm5 is not None:
+        # Try 5-point landmarks (landmark_5 or kps)
+        lm5 = _get_face_attr(f, "landmark_5", None) or _get_face_attr(f, "kps", None)
+        if lm5 is not None and hasattr(lm5, "__len__") and len(lm5) >= 5:
+            to_list = lambda p: p.tolist() if hasattr(p, "tolist") else list(p)
             record["landmarks"] = {
-                "left_eye": lm5[0].tolist(),
-                "right_eye": lm5[1].tolist(),
-                "nose": lm5[2].tolist(),
-                "mouth_left": lm5[3].tolist(),
-                "mouth_right": lm5[4].tolist(),
+                "left_eye": to_list(lm5[0]),
+                "right_eye": to_list(lm5[1]),
+                "nose": to_list(lm5[2]),
+                "mouth_left": to_list(lm5[3]),
+                "mouth_right": to_list(lm5[4]),
             }
         results.append(record)
     return results

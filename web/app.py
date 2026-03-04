@@ -33,6 +33,7 @@ from pipeline.detection import (
     OBJECT_MODEL_CHOICES,
 )
 from pipeline.render import make_video_from_images
+from pipeline.faces import run_face_detection
 
 try:
     import yt_dlp  # type: ignore
@@ -128,6 +129,15 @@ def api_process():
     if object_model not in OBJECT_MODEL_CHOICES:
         object_model = 'yolov8n'
 
+    scan_start_seconds = float(payload.get('scan_start_seconds', 0))
+    scan_end_seconds = payload.get('scan_end_seconds')
+    if scan_end_seconds is not None:
+        scan_end_seconds = float(scan_end_seconds)
+    else:
+        scan_end_seconds = scan_start_seconds + 180
+    if scan_end_seconds <= scan_start_seconds:
+        return jsonify({"error": "Scan end time must be greater than scan start time."}), 400
+
     if not url:
         return jsonify({"error": "URL is required"}), 400
 
@@ -176,10 +186,14 @@ def api_process():
             results_by_frame = { (fr.get('frame') or ''): (fr.get('detections') or []) for fr in frames_list }
             total_dets, by_class = generate_summary(results_by_frame)
             total_frames = len(results_by_frame)
+            total_face_detections = sum(len(fr.get('faces') or []) for fr in frames_list)
             conf_used = dj.get('confidence_threshold', conf_used)
             object_model_cached = dj.get('object_model', 'yolov8n')
+            face_model_cached = dj.get('face_model', payload.get('face_model', 'buffalo_l'))
         except Exception:
             object_model_cached = 'yolov8n'
+            face_model_cached = payload.get('face_model', 'buffalo_l')
+            total_face_detections = 0
 
         return jsonify({
             "status": "cached",
@@ -188,10 +202,11 @@ def api_process():
             "summary": {
                 "total_frames": total_frames,
                 "total_detections": total_dets,
+                "total_face_detections": total_face_detections,
                 "by_class": by_class,
                 "confidence_threshold": conf_used,
                 "object_model": object_model_cached,
-                "face_model": payload.get("face_model", "buffalo_l"),
+                "face_model": face_model_cached,
             },
             "results": {
                 "output_video_url": f"/results/{video_id}/detections_video.mp4",
@@ -219,7 +234,12 @@ def api_process():
         frames_dir_this_video = os.path.join(FRAMES_DIR, video_id)
         os.makedirs(frames_dir_this_video, exist_ok=True)
         t1 = time.perf_counter()
-        saved_frames = extract_frames(video_path, frames_dir_this_video)
+        saved_frames = extract_frames(
+            video_path,
+            frames_dir_this_video,
+            start_seconds=scan_start_seconds,
+            end_seconds=scan_end_seconds,
+        )
         run_stats["extract_frames_sec"] = round(time.perf_counter() - t1, 2)
 
         if not saved_frames:
@@ -255,6 +275,23 @@ def api_process():
         run_stats["device"] = device
         run_stats["gpu_name"] = gpu_name
 
+        # Face detection: run on original frames for better recall, draw on annotated frames
+        face_model_name = payload.get("face_model", "buffalo_l")
+        faces_by_frame: dict = {}
+        t_face = time.perf_counter()
+        try:
+            faces_by_frame = run_face_detection(
+                paths["processed_frames"],
+                face_model=face_model_name,
+                device=device,
+                face_conf_threshold=0.3,
+                source_frames_dir=frames_dir_this_video,
+            )
+        except Exception:
+            pass
+        run_stats["face_detection_sec"] = round(time.perf_counter() - t_face, 2)
+        total_face_detections = sum(len(v) for v in faces_by_frame.values())
+
         write_metadata(
             metadata_path=paths['metadata_txt'],
             video_id=video_id,
@@ -274,7 +311,9 @@ def api_process():
         run_stats["render_sec"] = round(time.perf_counter() - t3, 2)
         run_stats["total_sec"] = round(
             run_stats["download_sec"] + run_stats["extract_frames_sec"]
-            + run_stats["detection_sec"] + run_stats["render_sec"], 2
+            + run_stats["detection_sec"]
+            + run_stats.get("face_detection_sec", 0)
+            + run_stats["render_sec"], 2
         )
 
         save_detection_results(
@@ -283,8 +322,9 @@ def api_process():
             video_id=video_id,
             conf_threshold=conf_threshold,
             object_model=object_model,
-            face_model=payload.get("face_model", "buffalo_l"),
+            face_model=face_model_name,
             run_stats=run_stats,
+            faces_by_frame=faces_by_frame,
         )
 
         return jsonify({
@@ -294,10 +334,11 @@ def api_process():
             "summary": {
                 "total_frames": total_frames,
                 "total_detections": total_dets,
+                "total_face_detections": total_face_detections,
                 "by_class": by_class,
                 "confidence_threshold": conf_threshold,
                 "object_model": object_model,
-                "face_model": payload.get("face_model", "buffalo_l"),
+                "face_model": face_model_name,
                 "run_stats": run_stats,
             },
             "results": {

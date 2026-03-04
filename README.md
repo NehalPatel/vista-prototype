@@ -6,15 +6,16 @@ Face Detection • Face Recognition • Object Detection • Video Understanding
 
 ## Overview
 
-VISTA is an intelligent video-processing system. This repository currently implements the object detection prototype with a simple web UI and a CLI pipeline. It:
+VISTA is an intelligent video-processing system. This repository implements the object detection prototype with optional face detection, a simple web UI, and a CLI pipeline. It:
 
 - Downloads YouTube videos
-- Extracts keyframes (1 frame/sec)
-- Runs YOLOv8 object detection
-- Saves annotated frames, a single JSON of detections, and a summary
+- Extracts keyframes (configurable, default 1 frame/sec)
+- Runs YOLOv8 object detection (with optional per-object color)
+- Runs optional InsightFace face detection (Buffalo L/S/SC) on frames
+- Saves annotated frames (objects + face boxes), a single JSON of detections and faces, and a summary
 - Renders an annotated video from processed frames
 
-Future prototypes will add face detection (RetinaFace), face recognition (ArcFace/InsightFace), and embeddings (Face + CLIP).
+**Note:** Face detection is integrated but may report zero faces in some videos; this is under investigation. Object detection (YOLOv8) is stable.
 
 ## Processing Flow
 
@@ -67,6 +68,7 @@ Notes
 ## Technologies Used
 
 - Object Detection: YOLOv8 (Ultralytics)
+- Face Detection: InsightFace (Buffalo L/S/SC, optional; requires `insightface` + `onnxruntime` or `onnxruntime-gpu`)
 - Frame Extraction: OpenCV
 - Video Download: PyTube (fallback: `yt-dlp`)
 - Web UI: Flask
@@ -102,6 +104,7 @@ Windows (PowerShell)
 ```
 python -m venv env
 .\env\Scripts\activate
+pip install -r requirements.txt
 pip install ultralytics opencv-python pytube flask tqdm yt-dlp pillow
 ```
 
@@ -109,12 +112,17 @@ macOS/Linux (bash)
 ```
 python3 -m venv env
 source env/bin/activate
+pip install -r requirements.txt
 pip install ultralytics opencv-python pytube flask tqdm yt-dlp pillow
 ```
 
-Notes
+**Optional – face detection:** For face detection in the web UI and pipeline, install InsightFace and an ONNX runtime:
+```
+pip install insightface onnxruntime        # CPU
+pip install insightface onnxruntime-gpu    # GPU (CUDA)
+```
 - `yt-dlp` is optional but recommended; the pipeline uses it when PyTube cannot download.
-- If you plan to use GPU, install a CUDA-enabled `torch` build.
+- If you plan to use GPU for YOLO, install a CUDA-enabled `torch` build.
 
 ## Running
 
@@ -133,20 +141,22 @@ Web UI (interactive)
 python web/app.py
 ```
 - Open `http://localhost:8000/`
-- Paste a YouTube URL, set confidence threshold and output FPS, then Process
+- Paste a YouTube URL, set confidence threshold, face model (if using face detection), and output FPS, then Process
 - Links to the annotated video, detection JSON, and metadata are provided
+- Detected objects (and faces, when detected) appear as clickable badges; click to view frames containing that class
 
 API
 - Endpoint: `POST /api/process`
-- Body: `{ "url": string, "conf_threshold": float, "fps": int }`
-- Returns: `video_id`, `summary`, and URLs to output files under `/results/<video_id>/...`
+- Body: `{ "url": string, "conf_threshold": float, "fps": int, "face_model": "buffalo_l" | "buffalo_s" | "buffalo_sc", ... }`
+- Returns: `video_id`, `summary` (including `total_face_detections` when face detection runs), and URLs to output files under `/results/<video_id>/...`
 
 ## Output Summary
 
 - Total frames processed
 - Total objects detected
-- Counts per class
-- Confidence threshold used
+- Total face detections (when InsightFace is installed and used)
+- Counts per class (including Face in the object badges when faces are detected)
+- Confidence threshold and models used
 
 ## Suggested Test Videos
 
