@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import shutil
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
 # Ensure the parent directory is on sys.path for 'pipeline' imports
@@ -42,6 +43,7 @@ FRAMES_DIR = os.path.join(BASE_DIR, 'vista-prototype', 'frames')
 VIDEOS_DIR = os.path.join(BASE_DIR, 'vista-prototype', 'videos')
 
 
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -52,9 +54,14 @@ def serve_results(filename: str):
     return send_from_directory(RESULTS_BASE, filename)
 
 
+
+
 def get_video_metadata(url: str):
     if not yt_dlp:
         return {}
+
+
+ 
     try:
         ydl_opts = {"quiet": True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -76,8 +83,9 @@ def get_video_metadata(url: str):
 def api_process():
     payload = request.get_json(force=True) or {}
     url = payload.get('url', '').strip()
-    conf_threshold = float(payload.get('conf_threshold', 0.7))
+    conf_threshold = float(payload.get('conf_threshold', 0.5))
     fps = int(payload.get('fps', 1))
+    force_rescan = bool(payload.get('force_rescan', False))
 
     if not url:
         return jsonify({"error": "URL is required"}), 400
@@ -90,11 +98,30 @@ def api_process():
         return jsonify({"error": "Invalid or unsupported video ID derived from URL"}), 400
 
     paths = get_video_results_paths(video_id)
+
+    # If force rescan, remove existing results and frames for this video
+    if force_rescan:
+        base = paths["base"]
+        frames_dir_video = os.path.join(FRAMES_DIR, video_id)
+        if os.path.isdir(base):
+            try:
+                shutil.rmtree(base)
+            except Exception:
+                pass
+        if os.path.isdir(frames_dir_video):
+            try:
+                shutil.rmtree(frames_dir_video)
+            except Exception:
+                pass
+
     if not ensure_video_results_dirs(video_id):
         return jsonify({"error": "Failed to create results directories"}), 500
 
-    if os.path.exists(paths['detection_json']) or (
-        os.path.isdir(paths['processed_frames']) and any(os.scandir(paths['processed_frames']))
+    # Return cached results if they exist and we're not forcing a rescan
+    if not force_rescan and (
+        os.path.exists(paths['detection_json']) or (
+            os.path.isdir(paths['processed_frames']) and any(os.scandir(paths['processed_frames']))
+        )
     ):
         meta = get_video_metadata(url)
         total_frames = 0
@@ -133,14 +160,33 @@ def api_process():
     meta = get_video_metadata(url)
 
     try:
-        # Download, extract, detect, save, render
+        # Download video (required)
         video_path = download_video(url, VIDEOS_DIR)
-        extract_frames(video_path, FRAMES_DIR)
+        if not video_path or not os.path.isfile(video_path):
+            return jsonify({
+                "error": "Video download failed. Try again or use a different URL; some videos may be restricted.",
+                "video_id": video_id
+            }), 500
 
+        # Per-video frames directory so we only process this video's frames
+        frames_dir_this_video = os.path.join(FRAMES_DIR, video_id)
+        os.makedirs(frames_dir_this_video, exist_ok=True)
+        saved_frames = extract_frames(video_path, frames_dir_this_video)
+
+        if not saved_frames:
+            return jsonify({
+                "error": "No frames could be extracted from the video (file may be corrupted or unreadable).",
+                "video_id": video_id
+            }), 500
+
+        # Run detection on this video's frames only (resolve model from project root)
+        model_path = os.path.join(BASE_DIR, 'yolov8n.pt')
+        if not os.path.isfile(model_path):
+            model_path = 'yolov8n.pt'
         results_by_frame = run_yolo(
-            frames_dir=FRAMES_DIR,
+            frames_dir=frames_dir_this_video,
             detections_dir=paths['processed_frames'],
-            model_path='yolov8n.pt',
+            model_path=model_path,
             conf_threshold=conf_threshold,
         )
 

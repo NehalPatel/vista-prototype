@@ -1,0 +1,17 @@
+# Web app
+flask>=2.0
+
+# Video / pipeline (YOLO, download, render)
+ultralytics>=8.0
+opencv-python>=4.5
+pytube
+yt-dlp
+
+# Face pipeline (instruction_face.txt)
+# insightface  # optional: requires MSVC Build Tools; pip install insightface
+onnxruntime
+opencv-python>=4.5
+numpy
+scikit-image
+tqdm
+scipy

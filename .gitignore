@@ -28,3 +28,6 @@ vista-prototype/frames/
 vista-prototype/detections/
 vista-prototype/results/
 vista-prototype/videos/
+vista-prototype/faces/
+vista-prototype/face_results/
+vista-prototype/known_faces/embeddings/

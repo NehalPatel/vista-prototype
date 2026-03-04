@@ -1,0 +1,1 @@
+"""Fusion package: combined face + object detection with parallel processing."""

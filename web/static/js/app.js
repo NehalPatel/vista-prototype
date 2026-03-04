@@ -2,14 +2,16 @@ const form = document.getElementById('process-form');
 const urlInput = document.getElementById('video-url');
 const thresholdInput = document.getElementById('conf-threshold');
 const fpsInput = document.getElementById('fps');
+const forceRescanInput = document.getElementById('force-rescan');
 const processBtn = document.getElementById('process-btn');
 const statusEl = document.getElementById('status');
 const errorEl = document.getElementById('error');
 const resultsEl = document.getElementById('results');
-
+const resultsPlaceholder = document.getElementById('results-placeholder');
+const resultVideoEl = document.getElementById('result-video');
+const thumbEl = document.getElementById('thumb');
 const titleEl = document.getElementById('title');
 const durationEl = document.getElementById('duration');
-const thumbEl = document.getElementById('thumb');
 const videoIdEl = document.getElementById('video-id');
 const summaryListEl = document.getElementById('summary-list');
 const videoLinkEl = document.getElementById('video-link');
@@ -48,22 +50,33 @@ function secondsToHms(sec) {
   const h = Math.floor(sec / 3600);
   const m = Math.floor((sec % 3600) / 60);
   const s = Math.floor(sec % 60);
-  return [h, m, s]
-    .map((v) => String(v).padStart(2, '0'))
-    .join(':');
+  return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':');
+}
+
+/** Reliable YouTube thumbnail URL (same-origin friendly, no referrer issues). */
+function youtubeThumbUrl(videoId) {
+  if (!videoId) return '';
+  return 'https://img.youtube.com/vi/' + encodeURIComponent(videoId) + '/hqdefault.jpg';
 }
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   errorEl.hidden = true;
-  statusEl.textContent = 'Starting processing…';
+  errorEl.textContent = '';
+  statusEl.textContent = 'Starting…';
   processBtn.disabled = true;
   resultsEl.hidden = true;
+  if (resultsPlaceholder) resultsPlaceholder.hidden = false;
+  resultVideoEl.removeAttribute('src');
+  resultVideoEl.load();
+  thumbEl.src = '';
+  thumbEl.alt = 'Video thumbnail';
 
   const payload = {
     url: urlInput.value.trim(),
     conf_threshold: parseFloat(thresholdInput.value),
     fps: parseInt(fpsInput.value, 10),
+    force_rescan: forceRescanInput ? forceRescanInput.checked : false,
   };
 
   try {
@@ -71,6 +84,12 @@ form.addEventListener('submit', async (e) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
+    }).catch((networkErr) => {
+      const msg = (networkErr && networkErr.message) || '';
+      if (msg.toLowerCase().includes('fetch') || msg === 'NetworkError when attempting to fetch resource') {
+        throw new Error('Could not reach the server. Start the app (e.g. python web/app.py) and try again. Processing can take several minutes.');
+      }
+      throw networkErr;
     });
 
     if (!res.ok) {
@@ -83,22 +102,37 @@ form.addEventListener('submit', async (e) => {
       throw new Error(body.error || `HTTP ${res.status}`);
     }
 
-    statusEl.textContent = 'Processing completed.';
+    statusEl.textContent = 'Done.';
     const data = await res.json();
     const meta = data.metadata || {};
     const sum = data.summary || {};
     const out = data.results || {};
+    const videoId = data.video_id || '';
 
-    // Populate metadata
     titleEl.textContent = meta.title || '—';
     durationEl.textContent = secondsToHms(meta.duration);
-    videoIdEl.textContent = data.video_id || '—';
-    if (meta.thumbnail) {
-      thumbEl.src = meta.thumbnail;
-      thumbEl.alt = 'YouTube thumbnail';
+    videoIdEl.textContent = videoId || '—';
+
+    // Thumbnail: use YouTube's public URL so it always loads (no CORS/referrer issues)
+    const thumbUrl = youtubeThumbUrl(videoId);
+    if (thumbUrl) {
+      thumbEl.src = thumbUrl;
+      thumbEl.alt = meta.title ? 'Thumbnail: ' + meta.title : 'Video thumbnail';
+      thumbEl.onerror = function () {
+        this.onerror = null;
+        this.src = 'https://img.youtube.com/vi/' + encodeURIComponent(videoId) + '/default.jpg';
+      };
     }
 
-    
+    // In-page result video
+    if (out.output_video_url) {
+      resultVideoEl.src = out.output_video_url;
+      videoLinkEl.href = out.output_video_url;
+    }
+    if (out.detection_json_url) jsonLinkEl.href = out.detection_json_url;
+    if (out.metadata_url) metadataLinkEl.href = out.metadata_url;
+
+    // Summary list
     summaryListEl.innerHTML = '';
     const items = [
       ['Confidence threshold', sum.confidence_threshold],
@@ -107,7 +141,7 @@ form.addEventListener('submit', async (e) => {
     ];
     for (const [label, value] of items) {
       const li = document.createElement('li');
-      li.textContent = `${label}: ${value ?? '—'}`;
+      li.textContent = label + ': ' + (value ?? '—');
       summaryListEl.appendChild(li);
     }
 
@@ -119,7 +153,11 @@ form.addEventListener('submit', async (e) => {
     await renderResultsFromVideoId(data.video_id);
   } catch (err) {
     console.error(err);
-    errorEl.textContent = String(err.message || err);
+    let msg = err && (err.message || err);
+    if (String(msg).toLowerCase().includes('failed to fetch')) {
+      msg = 'Could not reach the server. Run the app from project root (python web/app.py) and try again. Processing may take several minutes.';
+    }
+    errorEl.textContent = String(msg);
     errorEl.hidden = false;
     statusEl.textContent = '';
   } finally {
