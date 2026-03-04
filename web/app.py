@@ -26,6 +26,8 @@ from pipeline.detection import (
     generate_summary,
     save_detection_results,
     write_metadata,
+    _resolve_model_path,
+    OBJECT_MODEL_CHOICES,
 )
 from pipeline.render import make_video_from_images
 
@@ -86,6 +88,9 @@ def api_process():
     conf_threshold = float(payload.get('conf_threshold', 0.5))
     fps = int(payload.get('fps', 1))
     force_rescan = bool(payload.get('force_rescan', False))
+    object_model = (payload.get('object_model') or 'yolov8n').strip().lower()
+    if object_model not in OBJECT_MODEL_CHOICES:
+        object_model = 'yolov8n'
 
     if not url:
         return jsonify({"error": "URL is required"}), 400
@@ -136,8 +141,9 @@ def api_process():
             total_dets, by_class = generate_summary(results_by_frame)
             total_frames = len(results_by_frame)
             conf_used = dj.get('confidence_threshold', conf_used)
+            object_model_cached = dj.get('object_model', 'yolov8n')
         except Exception:
-            pass
+            object_model_cached = 'yolov8n'
 
         return jsonify({
             "status": "cached",
@@ -148,6 +154,8 @@ def api_process():
                 "total_detections": total_dets,
                 "by_class": by_class,
                 "confidence_threshold": conf_used,
+                "object_model": object_model_cached,
+                "face_model": payload.get("face_model", "buffalo_l"),
             },
             "results": {
                 "output_video_url": f"/results/{video_id}/detections_video.mp4",
@@ -179,10 +187,8 @@ def api_process():
                 "video_id": video_id
             }), 500
 
-        # Run detection on this video's frames only (resolve model from project root)
-        model_path = os.path.join(BASE_DIR, 'yolov8n.pt')
-        if not os.path.isfile(model_path):
-            model_path = 'yolov8n.pt'
+        # Run detection with selected object model (resolve path; Ultralytics downloads if missing)
+        model_path = _resolve_model_path(object_model, BASE_DIR)
         results_by_frame = run_yolo(
             frames_dir=frames_dir_this_video,
             detections_dir=paths['processed_frames'],
@@ -198,6 +204,7 @@ def api_process():
             output_json_path=paths['detection_json'],
             video_id=video_id,
             conf_threshold=conf_threshold,
+            object_model=object_model,
         )
 
         # Metadata file
@@ -215,7 +222,7 @@ def api_process():
             total_frames=total_frames,
             total_detections=total_dets,
             by_class=by_class,
-            model_name='yolov8n.pt',
+            model_name=f'{object_model}.pt',
             device=device,
             conf_threshold=conf_threshold,
         )
@@ -233,6 +240,8 @@ def api_process():
                 "total_detections": total_dets,
                 "by_class": by_class,
                 "confidence_threshold": conf_threshold,
+                "object_model": object_model,
+                "face_model": payload.get("face_model", "buffalo_l"),
             },
             "results": {
                 "output_video_url": f"/results/{video_id}/detections_video.mp4",

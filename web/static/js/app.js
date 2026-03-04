@@ -3,6 +3,8 @@ const urlInput = document.getElementById('video-url');
 const thresholdInput = document.getElementById('conf-threshold');
 const fpsInput = document.getElementById('fps');
 const forceRescanInput = document.getElementById('force-rescan');
+const objectModelSelect = document.getElementById('object-model');
+const faceModelSelect = document.getElementById('face-model');
 const processBtn = document.getElementById('process-btn');
 const statusEl = document.getElementById('status');
 const errorEl = document.getElementById('error');
@@ -53,6 +55,16 @@ function secondsToHms(sec) {
   return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':');
 }
 
+function formatFaceModelLabel(value) {
+  const labels = { buffalo_l: 'Buffalo L (InsightFace)', buffalo_s: 'Buffalo S (InsightFace)', buffalo_sc: 'Buffalo SC (InsightFace)' };
+  return labels[value] || value || '—';
+}
+
+function formatObjectModelLabel(value) {
+  const labels = { yolov8n: 'YOLOv8 Nano', yolov8s: 'YOLOv8 Small', yolov8m: 'YOLOv8 Medium', yolov8l: 'YOLOv8 Large', yolov8x: 'YOLOv8 Extra-large' };
+  return labels[value] || value || '—';
+}
+
 /** Reliable YouTube thumbnail URL (same-origin friendly, no referrer issues). */
 function youtubeThumbUrl(videoId) {
   if (!videoId) return '';
@@ -77,6 +89,8 @@ form.addEventListener('submit', async (e) => {
     conf_threshold: parseFloat(thresholdInput.value),
     fps: parseInt(fpsInput.value, 10),
     force_rescan: forceRescanInput ? forceRescanInput.checked : false,
+    object_model: objectModelSelect ? objectModelSelect.value : 'yolov8n',
+    face_model: faceModelSelect ? faceModelSelect.value : 'buffalo_l',
   };
 
   try {
@@ -132,12 +146,14 @@ form.addEventListener('submit', async (e) => {
     if (out.detection_json_url) jsonLinkEl.href = out.detection_json_url;
     if (out.metadata_url) metadataLinkEl.href = out.metadata_url;
 
-    // Summary list
+    // Summary list (include models used)
     summaryListEl.innerHTML = '';
     const items = [
       ['Confidence threshold', sum.confidence_threshold],
       ['Total frames', sum.total_frames],
       ['Total detections', sum.total_detections],
+      ['Object model', sum.object_model ? formatObjectModelLabel(sum.object_model) : (objectModelSelect ? formatObjectModelLabel(objectModelSelect.value) : '—')],
+      ['Face detection model', sum.face_model ? formatFaceModelLabel(sum.face_model) : (faceModelSelect ? formatFaceModelLabel(faceModelSelect.value) : '—')],
     ];
     for (const [label, value] of items) {
       const li = document.createElement('li');
@@ -203,6 +219,8 @@ async function renderResultsFromVideoId(videoId) {
       ['Confidence threshold', djData.confidence_threshold],
       ['Total frames', totalFrames],
       ['Total detections', totalDetections],
+      ['Object model', formatObjectModelLabel(djData.object_model || (objectModelSelect ? objectModelSelect.value : 'yolov8n'))],
+      ['Face detection model', formatFaceModelLabel(djData.face_model || (faceModelSelect ? faceModelSelect.value : 'buffalo_l'))],
     ];
     for (const [label, value] of items) {
       const li = document.createElement('li');

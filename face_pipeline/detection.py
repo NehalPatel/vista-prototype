@@ -12,10 +12,19 @@ def _get_providers(device: str) -> List[str]:
     return ["CPUExecutionProvider"]
 
 
-def load_detector(device: str = "cuda", det_size: Tuple[int, int] = (640, 640)):
-    """Initialize insightface FaceAnalysis detector+recognition as a practical fallback.
+# InsightFace model packs: buffalo_l (best accuracy), buffalo_s (smaller), buffalo_sc (smallest, no alignment/attrs)
+FACE_MODEL_CHOICES = ("buffalo_l", "buffalo_s", "buffalo_sc")
 
-    Returns an app object with .get(image) -> list of faces that include bbox, landmarks, and embeddings.
+
+def load_detector(
+    device: str = "cuda",
+    det_size: Tuple[int, int] = (640, 640),
+    model_name: str = "buffalo_l",
+) -> Any:
+    """Initialize insightface FaceAnalysis detector+recognition.
+
+    model_name: one of buffalo_l, buffalo_s, buffalo_sc.
+    Returns an app object with .get(image) -> list of faces (bbox, landmarks, embeddings).
     """
     try:
         from insightface.app import FaceAnalysis
@@ -24,9 +33,9 @@ def load_detector(device: str = "cuda", det_size: Tuple[int, int] = (640, 640)):
             "insightface is required for the fallback detector. Install with: pip install insightface onnxruntime[-gpu]"
         ) from e
 
+    name = model_name if model_name in FACE_MODEL_CHOICES else "buffalo_l"
     providers = _get_providers(device)
-    app = FaceAnalysis(name="buffalo_l", providers=providers)
-    # ctx_id: 0 for GPU, -1 for CPU
+    app = FaceAnalysis(name=name, providers=providers)
     ctx_id = 0 if device == "cuda" else -1
     app.prepare(ctx_id=ctx_id, det_size=det_size)
     return app

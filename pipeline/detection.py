@@ -14,6 +14,9 @@ import json
 import numpy as np
 from ultralytics import YOLO  # type: ignore
 
+# YOLOv8 variants: n (nano) fastest/smallest → x (extra-large) most accurate
+OBJECT_MODEL_CHOICES = ("yolov8n", "yolov8s", "yolov8m", "yolov8l", "yolov8x")
+
 
 def _get_dominant_color_name(crop_bgr: np.ndarray) -> str:
     """Infer dominant color name from a BGR crop (e.g. object region). Uses HSV."""
@@ -60,6 +63,21 @@ def _get_dominant_color_name(crop_bgr: np.ndarray) -> str:
     return "other"
 
 
+def _resolve_model_path(model_key: str, base_dir: str = "") -> str:
+    """Return .pt path for a model key (e.g. yolov8n -> yolov8n.pt). Prefer local file if present."""
+    key = model_key.lower().strip()
+    if key.endswith(".pt"):
+        key = key[:-3]
+    if key not in OBJECT_MODEL_CHOICES:
+        key = "yolov8n"
+    name = f"{key}.pt"
+    if base_dir:
+        candidate = os.path.join(base_dir, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return name
+
+
 def run_yolo(
     frames_dir: str,
     detections_dir: str,
@@ -69,6 +87,7 @@ def run_yolo(
     """Run YOLOv8 on frames, save annotated images, and return filtered detections.
 
     Only detections with confidence >= conf_threshold are included.
+    model_path: e.g. yolov8n.pt (Ultralytics will download if missing).
     """
     os.makedirs(detections_dir, exist_ok=True)
     model = YOLO(model_path)
@@ -138,11 +157,13 @@ def save_detection_results(
     output_json_path: str,
     video_id: str,
     conf_threshold: float,
+    object_model: str = "yolov8n",
 ) -> None:
     """Write a single JSON file containing all detections for the video."""
     payload: Dict[str, Any] = {
         "video_id": video_id,
         "confidence_threshold": conf_threshold,
+        "object_model": object_model,
         "frames": [
             {"frame": frame, "detections": dets}
             for frame, dets in sorted(results_by_frame.items())

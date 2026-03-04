@@ -109,7 +109,11 @@ def _write_per_video_outputs(outdir: str, video_name: str, events: List[Dict[str
     return json_path, csv_path
 
 
-def _write_aggregate_report(outdir: str, per_video_events: Dict[str, List[Dict[str, Any]]]) -> Tuple[str, str]:
+def _write_aggregate_report(
+    outdir: str,
+    per_video_events: Dict[str, List[Dict[str, Any]]],
+    face_model: str = "buffalo_l",
+) -> Tuple[str, str]:
     agg_json = os.path.join(outdir, 'aggregate.faces.json')
     agg_csv = os.path.join(outdir, 'aggregate.faces.csv')
 
@@ -130,7 +134,11 @@ def _write_aggregate_report(outdir: str, per_video_events: Dict[str, List[Dict[s
                 flat_rows.append(row)
 
     with open(agg_json, 'w', encoding='utf-8') as jf:
-        json.dump({'videos': list(per_video_events.keys()), 'detections': flat_rows}, jf, indent=2)
+        json.dump({
+            'videos': list(per_video_events.keys()),
+            'face_model': face_model,
+            'detections': flat_rows,
+        }, jf, indent=2)
 
     with open(agg_csv, 'w', newline='', encoding='utf-8') as cf:
         writer = csv.writer(cf)
@@ -159,7 +167,15 @@ def _glob_inputs(inputs: List[str]) -> List[str]:
     return sorted(set(files))
 
 
-def run(inputs: List[str], outdir: str, fps: float, det_conf: float, thresholds: Dict[str, float], device: str) -> Dict[str, List[Dict[str, Any]]]:
+def run(
+    inputs: List[str],
+    outdir: str,
+    fps: float,
+    det_conf: float,
+    thresholds: Dict[str, float],
+    device: str,
+    model_name: str = "buffalo_l",
+) -> Dict[str, List[Dict[str, Any]]]:
     safe_print, progress_iter, load_detector, detect_faces, get_embedding, load_known_embeddings, match, KNOWN_FACES_DIR = _safe_imports()
 
     # Device selection
@@ -170,7 +186,7 @@ def run(inputs: List[str], outdir: str, fps: float, det_conf: float, thresholds:
             dev = 'cuda' if torch.cuda.is_available() else 'cpu'
         except Exception:
             dev = 'cpu'
-    detector_app = load_detector(device=dev)
+    detector_app = load_detector(device=dev, model_name=model_name)
 
     # Load known embeddings
     known_dir = KNOWN_FACES_DIR if isinstance(KNOWN_FACES_DIR, str) else str(KNOWN_FACES_DIR)
@@ -195,7 +211,7 @@ def run(inputs: List[str], outdir: str, fps: float, det_conf: float, thresholds:
                 events.append({'frame_index': idx, 'timestamp': ts, 'faces': faces})
         _write_per_video_outputs(outdir, v, events)
         per_video_events[v] = events
-    _write_aggregate_report(outdir, per_video_events)
+    _write_aggregate_report(outdir, per_video_events, face_model=model_name)
     return per_video_events
 
 
@@ -208,6 +224,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument('--same', type=float, default=0.6, help='Recognition threshold for confident match')
     p.add_argument('--maybe', type=float, default=0.8, help='Recognition threshold for possible match')
     p.add_argument('--device', default='auto', choices=['auto', 'cpu', 'cuda'], help='Device selection for detector')
+    p.add_argument('--model', default='buffalo_l', choices=['buffalo_l', 'buffalo_s', 'buffalo_sc'], help='Face model: buffalo_l (best), buffalo_s, buffalo_sc')
     return p.parse_args(argv)
 
 
@@ -215,7 +232,15 @@ def main(argv: List[str] = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     thresholds = {'same': float(args.same), 'maybe': float(args.maybe)}
     try:
-        run(inputs=args.inputs, outdir=args.outdir, fps=float(args.fps), det_conf=float(args.det_conf), thresholds=thresholds, device=args.device)
+        run(
+            inputs=args.inputs,
+            outdir=args.outdir,
+            fps=float(args.fps),
+            det_conf=float(args.det_conf),
+            thresholds=thresholds,
+            device=args.device,
+            model_name=args.model,
+        )
         print(f"Done. Reports written to: {args.outdir}")
         return 0
     except Exception as e:

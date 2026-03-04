@@ -27,6 +27,7 @@ from pipeline.video import download_video, extract_frames
 from pipeline.render import make_video_from_images
 
 from face_pipeline.detection import load_detector as load_face_detector, detect_faces
+from pipeline.detection import _resolve_model_path, OBJECT_MODEL_CHOICES
 from ultralytics import YOLO  # type: ignore
 
 
@@ -90,6 +91,8 @@ def run_parallel_pipeline(
     yolo_conf: float = 0.7,
     face_conf: float = 0.8,
     face_device: str = "cuda",
+    face_model: str = "buffalo_l",
+    yolo_model: str = "yolov8n",
     fps: int = 1,
     video_id: str = "",
 ) -> Dict[str, Any]:
@@ -97,15 +100,23 @@ def run_parallel_pipeline(
     combined_frames_dir = os.path.join(output_base, "combined_frames")
     os.makedirs(combined_frames_dir, exist_ok=True)
 
-    # Init models
-    yolo_model = _yolo_init("yolov8n.pt")
-    face_detector = load_face_detector(device=face_device)
+    # Init models (YOLO path: prefer local .pt, else Ultralytics downloads)
+    yolo_path = _resolve_model_path(yolo_model, os.getcwd())
+    yolo_net = _yolo_init(yolo_path)
+    face_detector = load_face_detector(device=face_device, model_name=face_model)
 
     frames = _list_frames(frames_dir)
     if not frames:
         raise RuntimeError(f"No frames found in {frames_dir}")
 
-    combined_json = {"video_id": video_id, "yolo_conf": yolo_conf, "face_conf": face_conf, "frames": []}
+    combined_json = {
+        "video_id": video_id,
+        "yolo_conf": yolo_conf,
+        "yolo_model": yolo_model,
+        "face_conf": face_conf,
+        "face_model": face_model,
+        "frames": [],
+    }
     metrics = {"per_frame": [], "summary": {"avg_yolo_ms": 0.0, "avg_face_ms": 0.0, "avg_total_ms": 0.0}}
 
     # Use a thread pool to process frames concurrently per detector
@@ -121,7 +132,7 @@ def run_parallel_pipeline(
 
             # Schedule both detectors
             t0 = time.time()
-            yolo_future = executor.submit(_run_yolo_on_image, yolo_model, img, yolo_conf)
+            yolo_future = executor.submit(_run_yolo_on_image, yolo_net, img, yolo_conf)
             face_future = executor.submit(detect_faces, face_detector, img, face_conf)
 
             # Collect results
@@ -193,6 +204,8 @@ def parse_args():
     parser.add_argument("--yolo-conf", type=float, default=0.7, help="Confidence threshold for YOLO objects")
     parser.add_argument("--face-conf", type=float, default=0.8, help="Confidence threshold for face detections")
     parser.add_argument("--face-device", choices=["cuda", "cpu"], default="cuda", help="Device for InsightFace detector")
+    parser.add_argument("--face-model", default="buffalo_l", choices=["buffalo_l", "buffalo_s", "buffalo_sc"], help="Face model: buffalo_l (best), buffalo_s, buffalo_sc")
+    parser.add_argument("--yolo-model", default="yolov8n", choices=list(OBJECT_MODEL_CHOICES), help="YOLO model: yolov8n/s/m/l/x (nano to extra-large)")
     return parser.parse_args()
 
 
@@ -245,6 +258,8 @@ def main():
         yolo_conf=args.yolo_conf,
         face_conf=args.face_conf,
         face_device=args.face_device,
+        face_model=args.face_model,
+        yolo_model=args.yolo_model,
         fps=args.fps,
         video_id=video_id,
     )
@@ -262,7 +277,9 @@ def main():
         f.write(f"video_id: {video_id}\n")
         f.write(f"source: {source_desc}\n")
         f.write(f"yolo_conf_threshold: {args.yolo_conf}\n")
+        f.write(f"yolo_model: {args.yolo_model}\n")
         f.write(f"face_conf_threshold: {args.face_conf}\n")
+        f.write(f"face_model: {args.face_model}\n")
         f.write(f"device: {device}\n")
         f.write(f"combined_results_json: {os.path.relpath(fusion_outputs['combined_json'], paths['base'])}\n")
         f.write(f"combined_metrics_json: {os.path.relpath(fusion_outputs['metrics_json'], paths['base'])}\n")

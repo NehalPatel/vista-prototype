@@ -7,7 +7,7 @@ from typing import List
 import cv2
 import numpy as np
 
-from .detection import load_detector, detect_faces
+from .detection import load_detector, detect_faces, FACE_MODEL_CHOICES
 from .embeddings import get_embedding, save_embedding
 from .paths import KNOWN_FACES_DIR
 
@@ -26,6 +26,7 @@ def main():
     parser.add_argument("--labels-out", default=os.path.join(str(KNOWN_FACES_DIR), "labels.json"), help="Path to labels.json output")
     parser.add_argument("--embeddings-dir", default=os.path.join(str(KNOWN_FACES_DIR), "embeddings"), help="Output directory for embeddings")
     parser.add_argument("--device", choices=["cuda", "cpu"], default="cuda", help="Device for InsightFace")
+    parser.add_argument("--model", choices=list(FACE_MODEL_CHOICES), default="buffalo_l", help="Face model: buffalo_l, buffalo_s, buffalo_sc")
     parser.add_argument("--conf", type=float, default=0.8, help="Face detection confidence threshold")
     args = parser.parse_args()
 
@@ -33,7 +34,7 @@ def main():
     labels = {}
 
     # Initialize detector
-    detector = load_detector(device=args.device)
+    detector = load_detector(device=args.device, model_name=args.model)
 
     images = find_images(args.images_dir)
     if not images:

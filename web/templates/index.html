@@ -41,6 +41,7 @@
             <p>Analyze YouTube videos for objects and metadata.</p>
           </div>
           <form id="process-form">
+            <!-- Today's design: URL full width, then options in one row -->
             <div class="form-group url-group">
               <label for="video-url" class="sr-only">YouTube URL</label>
               <div class="input-wrapper">
@@ -49,7 +50,21 @@
               </div>
             </div>
 
-            <div class="form-row">
+            <div class="form-row form-row-4">
+              <div class="form-group">
+                <label for="object-model">Object Detection Model</label>
+                <div class="input-wrapper">
+                  <span class="material-symbols-rounded input-icon">category</span>
+                  <select id="object-model" name="object-model" aria-describedby="object-model-desc">
+                    <option value="yolov8n">YOLOv8 Nano (fastest, ~3M params)</option>
+                    <option value="yolov8s">YOLOv8 Small (~11M params)</option>
+                    <option value="yolov8m">YOLOv8 Medium (~26M params)</option>
+                    <option value="yolov8l">YOLOv8 Large (~44M params)</option>
+                    <option value="yolov8x">YOLOv8 Extra-large (best accuracy, ~68M params)</option>
+                  </select>
+                </div>
+                <p id="object-model-desc" class="input-hint">Ultralytics YOLOv8. Larger = more accurate, slower.</p>
+              </div>
               <div class="form-group">
                 <label for="conf-threshold">Confidence Threshold</label>
                 <div class="input-wrapper">
@@ -57,7 +72,6 @@
                   <input id="conf-threshold" type="number" min="0" max="1" step="0.05" value="0.7" />
                 </div>
               </div>
-
               <div class="form-group">
                 <label for="fps">Output FPS</label>
                 <div class="input-wrapper">
@@ -65,9 +79,21 @@
                   <input id="fps" type="number" min="1" max="60" step="1" value="1" />
                 </div>
               </div>
+              <div class="form-group">
+                <label for="face-model">Face Detection Model</label>
+                <div class="input-wrapper">
+                  <span class="material-symbols-rounded input-icon">face</span>
+                  <select id="face-model" name="face-model" aria-describedby="face-model-desc">
+                    <option value="buffalo_l">Buffalo L (best accuracy, ~326MB)</option>
+                    <option value="buffalo_s">Buffalo S (smaller, ~159MB)</option>
+                    <option value="buffalo_sc">Buffalo SC (smallest, ~16MB)</option>
+                  </select>
+                </div>
+                <p id="face-model-desc" class="input-hint">Used for face detection (e.g. fusion). InsightFace SCRFD.</p>
+              </div>
             </div>
 
-            <label class="checkbox-wrap" style="display:flex;align-items:center;gap:0.5rem;margin-top:0.5rem;">
+            <label class="checkbox-wrap">
               <input id="force-rescan" type="checkbox" name="force-rescan" />
               <span>Force rescan (overwrite existing)</span>
             </label>
@@ -90,18 +116,7 @@
     <section class="results-section">
       <div class="container">
         <div id="results" class="results-grid" hidden>
-          <div class="card" style="grid-column: 1 / -1;">
-            <div class="card-header-small">
-              <span class="material-symbols-rounded">videocam</span>
-              <h3>Annotated Video</h3>
-            </div>
-            <div class="video-wrap" style="max-width: 800px; margin: 0 auto;">
-              <video id="result-video" controls preload="metadata" playsinline style="width:100%; border-radius: 8px;">
-                Your browser does not support the video tag.
-              </video>
-            </div>
-          </div>
-          <!-- Video Metadata Card -->
+          <!-- Row 1: Meta, Summary, Output (today's placement) -->
           <div class="card meta-card">
             <div class="card-header-small">
               <span class="material-symbols-rounded">movie</span>
@@ -144,6 +159,19 @@
               <a id="metadata-link" href="#" target="_blank" class="action-link">
                 <span class="material-symbols-rounded">description</span> Metadata Text
               </a>
+            </div>
+          </div>
+
+          <!-- Annotated Video (full width, below the three cards) -->
+          <div class="card video-card">
+            <div class="card-header-small">
+              <span class="material-symbols-rounded">videocam</span>
+              <h3>Annotated Video</h3>
+            </div>
+            <div class="video-wrap" style="max-width: 800px; margin: 0 auto;">
+              <video id="result-video" controls preload="metadata" playsinline style="width:100%; border-radius: 8px;">
+                Your browser does not support the video tag.
+              </video>
             </div>
           </div>
 

@@ -22,6 +22,8 @@ from pipeline.detection import (
     generate_summary,
     save_detection_results,
     write_metadata,
+    _resolve_model_path,
+    OBJECT_MODEL_CHOICES,
 )
 from pipeline.render import make_video_from_images
 
@@ -33,6 +35,7 @@ def parse_args():
     parser.add_argument("--out-video", type=str, default=None, help="Output path for the rendered annotated video")
     parser.add_argument("--fps", type=int, default=1, help="Frames per second for the output video")
     parser.add_argument("--conf-threshold", type=float, default=0.7, help="Confidence threshold for detections")
+    parser.add_argument("--model", choices=list(OBJECT_MODEL_CHOICES), default="yolov8n", help="YOLOv8 model: n/s/m/l/x (nano to extra-large)")
     return parser.parse_args()
 
 
@@ -88,11 +91,12 @@ def main():
     # Extract frames
     extract_frames(video_path, FRAMES_DIR)
 
-    # Run detection with confidence threshold, save annotated frames into processed_frames
+    # Run detection with selected model (Ultralytics downloads .pt if missing)
+    model_path = _resolve_model_path(args.model, os.getcwd())
     results_by_frame = run_yolo(
         frames_dir=FRAMES_DIR,
         detections_dir=paths["processed_frames"],
-        model_path="yolov8n.pt",
+        model_path=model_path,
         conf_threshold=args.conf_threshold,
     )
 
@@ -105,6 +109,7 @@ def main():
         output_json_path=paths["detection_json"],
         video_id=vid_id,
         conf_threshold=args.conf_threshold,
+        object_model=args.model,
     )
 
     device = "cpu"
@@ -121,7 +126,7 @@ def main():
         total_frames=total_frames,
         total_detections=total_dets,
         by_class=by_class,
-        model_name="yolov8n.pt",
+        model_name=f"{args.model}.pt",
         device=device,
         conf_threshold=args.conf_threshold,
     )

@@ -15,7 +15,7 @@ from .paths import (
     FACE_RESULTS_DIR,
     KNOWN_FACES_DIR,
 )
-from .detection import load_detector, detect_faces, crop_face, save_image
+from .detection import load_detector, detect_faces, crop_face, save_image, FACE_MODEL_CHOICES
 from .embeddings import get_embedding, save_embedding
 from .recognition import load_known_embeddings, match
 
@@ -34,6 +34,7 @@ def main():
     parser.add_argument("--frames-dir", default=str(FRAMES_DIR), help="Directory containing frames to process")
     parser.add_argument("--detect-conf", type=float, default=0.8, help="Minimum confidence for face detections")
     parser.add_argument("--device", choices=["cuda", "cpu"], default="cuda", help="Device for InsightFace")
+    parser.add_argument("--model", choices=list(FACE_MODEL_CHOICES), default="buffalo_l", help="Face model: buffalo_l (best), buffalo_s, buffalo_sc")
     parser.add_argument("--force", action="store_true", help="Overwrite existing crops/embeddings")
     parser.add_argument("--do-recognition", action="store_true", help="Perform recognition against known faces")
     parser.add_argument("--known-faces-dir", default=str(KNOWN_FACES_DIR), help="Directory containing known face embeddings and labels.json")
@@ -47,7 +48,7 @@ def main():
         return 1
 
     # Initialize detector (with recognition model enabled)
-    detector = load_detector(device=args.device)
+    detector = load_detector(device=args.device, model_name=args.model)
 
     faces_json: Dict[str, Any] = {}
 
