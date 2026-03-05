@@ -106,6 +106,24 @@
                     </div>
                   </div>
                 </div>
+                <div class="form-row form-row-2 form-row-scan">
+                  <div class="form-group">
+                    <label for="scan-start">Scan start (min.sec)</label>
+                    <div class="input-wrapper">
+                      <span class="material-symbols-rounded input-icon">schedule</span>
+                      <input id="scan-start" type="text" inputmode="decimal" value="0" placeholder="e.g. 6.30 = 6 min 30 sec" />
+                    </div>
+                    <p class="input-hint">e.g. 6.30 = 6 min 30 sec. Next 180 s are scanned by default.</p>
+                  </div>
+                  <div class="form-group">
+                    <label for="scan-end">Scan end (min.sec or seconds)</label>
+                    <div class="input-wrapper">
+                      <span class="material-symbols-rounded input-icon">schedule</span>
+                      <input id="scan-end" type="text" inputmode="decimal" value="3.00" placeholder="e.g. 9.30 or 570" />
+                    </div>
+                    <p class="input-hint">Default: start + 180 s. Use min.sec (9.30) or total seconds (570).</p>
+                  </div>
+                </div>
                 <div class="system-info-block" id="system-info-block">
                   <h4 class="system-info-heading">
                     <span class="material-symbols-rounded">computer</span>
@@ -122,6 +140,27 @@
               <input id="force-rescan" type="checkbox" name="force-rescan" />
               <span>Force rescan (overwrite existing)</span>
             </label>
+
+            <fieldset class="form-group-set" aria-labelledby="scanmode-legend">
+              <legend id="scanmode-legend" class="group-legend">
+                <span class="material-symbols-rounded">visibility</span>
+                Scan type
+              </legend>
+              <div class="form-row form-row-3">
+                <label class="radio-pill">
+                  <input type="radio" name="scan-mode" value="both" checked />
+                  <span>Objects + Faces</span>
+                </label>
+                <label class="radio-pill">
+                  <input type="radio" name="scan-mode" value="objects" />
+                  <span>Objects only</span>
+                </label>
+                <label class="radio-pill">
+                  <input type="radio" name="scan-mode" value="faces" />
+                  <span>Faces only</span>
+                </label>
+              </div>
+            </fieldset>
 
             <button id="process-btn" type="submit" class="btn-primary">
               <span class="material-symbols-rounded">play_circle</span>
@@ -187,26 +226,22 @@
             </div>
           </div>
 
-          <!-- Annotated Video (full width, below the three cards) -->
-          <div class="card video-card">
-            <div class="card-header-small">
-              <span class="material-symbols-rounded">videocam</span>
-              <h3>Annotated Video</h3>
-            </div>
-            <div class="video-wrap" style="max-width: 800px; margin: 0 auto;">
-              <video id="result-video" controls preload="metadata" playsinline style="width:100%; border-radius: 8px;">
-                Your browser does not support the video tag.
-              </video>
-            </div>
-          </div>
-
-          <!-- Objects List Card (Full Width) -->
+          <!-- Objects List Card -->
           <div class="card objects-card">
             <div class="card-header-small">
               <span class="material-symbols-rounded">category</span>
               <h3>Detected Objects</h3>
             </div>
             <ul id="objects-list" class="tags-list"></ul>
+          </div>
+
+          <!-- Detected Faces Card (below Objects) -->
+          <div class="card faces-card">
+            <div class="card-header-small">
+              <span class="material-symbols-rounded">face</span>
+              <h3>Detected Faces</h3>
+            </div>
+            <ul id="faces-list" class="tags-list"></ul>
           </div>
         </div>
         <div id="results-placeholder" class="results-placeholder">

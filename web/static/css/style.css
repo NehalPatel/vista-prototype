@@ -233,6 +233,7 @@ button {
   pointer-events: none;
 }
 
+input[type="text"],
 input[type="url"],
 input[type="number"] {
   width: 100%;
@@ -264,9 +265,20 @@ select:focus {
 }
 
 .input-hint {
-  margin: 0.25rem 0 0;
+  margin: 0.35rem 0 0;
   font-size: 0.8rem;
   color: var(--text-muted);
+  line-height: 1.4;
+  overflow: visible;
+  word-wrap: break-word;
+}
+
+.form-row-scan {
+  align-items: start;
+}
+
+.form-row-scan .input-hint {
+  min-height: 2.6em;
 }
 
 input:focus {
@@ -305,6 +317,11 @@ input:focus {
   border-radius: var(--radius-md);
   padding: 1.25rem;
   background: var(--bg-panel);
+}
+
+.form-group {
+  overflow: visible;
+  min-width: 0;
 }
 
 .form-group-set .form-row {
@@ -375,6 +392,32 @@ input:focus {
   margin-top: 0.25rem;
 }
 
+.form-row-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.radio-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.radio-pill input[type="radio"] {
+  accent-color: var(--primary);
+}
+
+.radio-pill span {
+  white-space: nowrap;
+}
+
 .btn-primary {
   display: flex;
   align-items: center;
@@ -416,8 +459,8 @@ input:focus {
   gap: 1.5rem;
   grid-template-areas:
     "meta summary output"
-    "video video video"
-    "objects objects objects";
+    "objects objects objects"
+    "faces faces faces";
 }
 
 .meta-card {
@@ -432,12 +475,12 @@ input:focus {
   grid-area: output;
 }
 
-.video-card {
-  grid-area: video;
-}
-
 .objects-card {
   grid-area: objects;
+}
+
+.faces-card {
+  grid-area: faces;
 }
 
 /* Metadata */
@@ -564,6 +607,19 @@ input:focus {
   border-color: var(--primary);
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
+}
+
+.tags-list li.faces-empty {
+  cursor: default;
+  color: var(--text-muted);
+}
+
+.tags-list li.faces-empty:hover {
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  border-color: var(--border);
+  transform: none;
+  box-shadow: none;
 }
 
 /* Footer */

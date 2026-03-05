@@ -7,15 +7,18 @@ If insightface is not installed, returns empty results and skips drawing.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def run_face_detection(
     annotated_frames_dir: str,
     face_model: str = "buffalo_l",
     device: str = "cuda",
-    face_conf_threshold: float = 0.3,
+    face_conf_threshold: float = 0.5,
     source_frames_dir: Optional[str] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """Run face detection and draw face boxes on annotated frames.
@@ -28,14 +31,16 @@ def run_face_detection(
     """
     try:
         from face_pipeline.detection import load_detector, detect_faces
-    except Exception:
+    except Exception as e:
+        logger.warning("Face detection skipped: insightface not available: %s", e)
         return {}
 
     faces_by_frame: Dict[str, List[Dict[str, Any]]] = {}
     try:
-        # Larger det_size (896) helps detect smaller/distant faces in multi-person videos
-        detector = load_detector(device=device, model_name=face_model, det_size=(896, 896))
-    except Exception:
+        # Match working vista-face-recognition project: det_size=(640, 640)
+        detector = load_detector(device=device, model_name=face_model, det_size=(640, 640))
+    except Exception as e:
+        logger.warning("Face detection skipped: failed to load detector: %s", e)
         return {}
 
     import cv2
@@ -46,15 +51,17 @@ def run_face_detection(
             continue
         path_for_detection = os.path.join(source_frames_dir, fname) if source_frames_dir else os.path.join(annotated_frames_dir, fname)
         path_annotated = os.path.join(annotated_frames_dir, fname)
-        img_for_detection = cv2.imread(path_for_detection)
-        if img_for_detection is None:
+        if not os.path.isfile(path_for_detection):
             continue
-        dets = detect_faces(detector, img_for_detection, conf_thresh=face_conf_threshold)
+        # Pass path (like vista-face-recognition) so detector reads image the same way
+        dets = detect_faces(detector, path_for_detection, conf_thresh=face_conf_threshold)
         records = [
             {"bbox": d["bbox"], "confidence": round(float(d["confidence"]), 4)}
             for d in dets
         ]
         faces_by_frame[fname] = records
+        if not dets and len(faces_by_frame) == 1:
+            logger.info("Face detection ran but found no faces in first frame (threshold=%.2f). Check video content or lower face_conf_threshold.", face_conf_threshold)
         # Draw face boxes on the annotated image (so output video has both YOLO and face boxes)
         img_annotated = cv2.imread(path_annotated)
         if img_annotated is not None:

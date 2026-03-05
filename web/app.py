@@ -125,6 +125,7 @@ def api_process():
     conf_threshold = float(payload.get('conf_threshold', 0.5))
     fps = int(payload.get('fps', 1))
     force_rescan = bool(payload.get('force_rescan', False))
+    scan_mode = str(payload.get('scan_mode', 'both')).lower()
     object_model = (payload.get('object_model') or 'yolov8n').strip().lower()
     if object_model not in OBJECT_MODEL_CHOICES:
         object_model = 'yolov8n'
@@ -248,18 +249,43 @@ def api_process():
                 "video_id": video_id
             }), 500
 
-        # Run detection with selected object model (resolve path; Ultralytics downloads if missing)
-        model_path = _resolve_model_path(object_model, BASE_DIR)
-        t2 = time.perf_counter()
-        results_by_frame = run_yolo(
-            frames_dir=frames_dir_this_video,
-            detections_dir=paths['processed_frames'],
-            model_path=model_path,
-            conf_threshold=conf_threshold,
-        )
-        run_stats["detection_sec"] = round(time.perf_counter() - t2, 2)
+        # Decide which pipelines to run based on scan_mode
+        run_objects = scan_mode in ("objects", "both")
+        run_faces = scan_mode in ("faces", "both")
 
-        total_dets, by_class = generate_summary(results_by_frame)
+        results_by_frame: dict = {}
+        total_dets = 0
+        by_class: dict = {}
+        run_stats["detection_sec"] = 0.0
+
+        # Object detection (YOLO) – only when enabled
+        if run_objects:
+            model_path = _resolve_model_path(object_model, BASE_DIR)
+            t2 = time.perf_counter()
+            results_by_frame = run_yolo(
+                frames_dir=frames_dir_this_video,
+                detections_dir=paths['processed_frames'],
+                model_path=model_path,
+                conf_threshold=conf_threshold,
+            )
+            run_stats["detection_sec"] = round(time.perf_counter() - t2, 2)
+            total_dets, by_class = generate_summary(results_by_frame)
+        else:
+            # Faces-only mode: copy raw frames into processed_frames so we can draw faces + render video
+            import cv2
+
+            os.makedirs(paths['processed_frames'], exist_ok=True)
+            for fname in sorted(os.listdir(frames_dir_this_video)):
+                if not fname.lower().endswith((".jpg", ".jpeg", ".png")):
+                    continue
+                src = os.path.join(frames_dir_this_video, fname)
+                dst = os.path.join(paths['processed_frames'], fname)
+                img = cv2.imread(src)
+                if img is None:
+                    continue
+                cv2.imwrite(dst, img)
+                results_by_frame[fname] = []
+
         total_frames = len(results_by_frame)
 
         # Device used for detection
@@ -275,22 +301,31 @@ def api_process():
         run_stats["device"] = device
         run_stats["gpu_name"] = gpu_name
 
-        # Face detection: run on original frames for better recall, draw on annotated frames
+        # Face detection: run on original frames for better recall, draw on annotated frames (only when enabled)
         face_model_name = payload.get("face_model", "buffalo_l")
         faces_by_frame: dict = {}
-        t_face = time.perf_counter()
-        try:
-            faces_by_frame = run_face_detection(
-                paths["processed_frames"],
-                face_model=face_model_name,
-                device=device,
-                face_conf_threshold=0.3,
-                source_frames_dir=frames_dir_this_video,
-            )
-        except Exception:
-            pass
-        run_stats["face_detection_sec"] = round(time.perf_counter() - t_face, 2)
-        total_face_detections = sum(len(v) for v in faces_by_frame.values())
+        total_face_detections = 0
+        if run_faces:
+            t_face = time.perf_counter()
+            try:
+                face_conf_threshold = float(payload.get("face_conf_threshold", 0.5))
+            except Exception:
+                face_conf_threshold = 0.5
+            try:
+                faces_by_frame = run_face_detection(
+                    paths["processed_frames"],
+                    face_model=face_model_name,
+                    device=device,
+                    face_conf_threshold=face_conf_threshold,
+                    source_frames_dir=frames_dir_this_video,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Face detection failed: %s", e, exc_info=True
+                )
+            run_stats["face_detection_sec"] = round(time.perf_counter() - t_face, 2)
+            total_face_detections = sum(len(v) for v in faces_by_frame.values())
 
         write_metadata(
             metadata_path=paths['metadata_txt'],
@@ -310,10 +345,12 @@ def api_process():
         make_video_from_images(paths['processed_frames'], out_video, fps=fps)
         run_stats["render_sec"] = round(time.perf_counter() - t3, 2)
         run_stats["total_sec"] = round(
-            run_stats["download_sec"] + run_stats["extract_frames_sec"]
-            + run_stats["detection_sec"]
+            run_stats.get("download_sec", 0)
+            + run_stats.get("extract_frames_sec", 0)
+            + run_stats.get("detection_sec", 0)
             + run_stats.get("face_detection_sec", 0)
-            + run_stats["render_sec"], 2
+            + run_stats.get("render_sec", 0),
+            2,
         )
 
         save_detection_results(

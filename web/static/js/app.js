@@ -22,6 +22,7 @@ const videoLinkEl = document.getElementById('video-link');
 const jsonLinkEl = document.getElementById('json-link');
 const metadataLinkEl = document.getElementById('metadata-link');
 const objectsListEl = document.getElementById('objects-list');
+const facesListEl = document.getElementById('faces-list');
 const modalEl = document.getElementById('object-modal');
 const modalTitleEl = document.getElementById('modal-title');
 const modalImageEl = document.getElementById('modal-image');
@@ -83,15 +84,15 @@ function buildSummaryItems(sum, objectModelSelect, faceModelSelect, runStats) {
     ['Total detections', sum.total_detections],
     ['Total face detections', sum.total_face_detections != null ? sum.total_face_detections : '—'],
     ['Object model', sum.object_model ? formatObjectModelLabel(sum.object_model) : (objectModelSelect ? formatObjectModelLabel(objectModelSelect.value) : '—')],
-    ['Face detection model', sum.face_model ? formatFaceModelLabel(sum.face_model) : (faceModelSelect ? formatFaceModelLabel(faceModelSelect.value) : '—')],
+    ['Face model', sum.face_model ? formatFaceModelLabel(sum.face_model) : (faceModelSelect ? formatFaceModelLabel(faceModelSelect.value) : '—')],
   ];
   if (runStats && typeof runStats === 'object') {
-    items.push(['Total time', formatDuration(runStats.total_sec)]);
-    items.push(['Download', formatDuration(runStats.download_sec)]);
-    items.push(['Detection', formatDuration(runStats.detection_sec)]);
-    items.push(['Render', formatDuration(runStats.render_sec)]);
-    items.push(['Device', runStats.device === 'cuda' ? 'GPU (CUDA)' : 'CPU']);
-    if (runStats.gpu_name) items.push(['Graphics card', runStats.gpu_name]);
+    const timeStr = formatDuration(runStats.total_sec);
+    const deviceStr = runStats.device === 'cuda' && runStats.gpu_name
+      ? 'GPU (' + runStats.gpu_name + ')'
+      : (runStats.device === 'cuda' ? 'GPU (CUDA)' : 'CPU');
+    items.push(['Time', timeStr]);
+    items.push(['Device', deviceStr]);
   }
   return items;
 }
@@ -129,14 +130,17 @@ form.addEventListener('submit', async (e) => {
   processBtn.disabled = true;
   resultsEl.hidden = true;
   if (resultsPlaceholder) resultsPlaceholder.hidden = false;
-  resultVideoEl.removeAttribute('src');
-  resultVideoEl.load();
+  if (resultVideoEl) {
+    resultVideoEl.removeAttribute('src');
+    resultVideoEl.load();
+  }
   thumbEl.src = '';
   thumbEl.alt = 'Video thumbnail';
 
   const scanStart = scanStartInput ? parseTimeToSeconds(scanStartInput.value, 0) : 0;
   const scanEnd = scanEndInput ? parseTimeToSeconds(scanEndInput.value, scanStart + 180) : (scanStart + 180);
 
+  const scanModeEl = document.querySelector('input[name="scan-mode"]:checked');
   const payload = {
     url: urlInput.value.trim(),
     conf_threshold: parseFloat(thresholdInput.value),
@@ -146,6 +150,7 @@ form.addEventListener('submit', async (e) => {
     force_rescan: forceRescanInput ? forceRescanInput.checked : false,
     object_model: objectModelSelect ? objectModelSelect.value : 'yolov8n',
     face_model: faceModelSelect ? faceModelSelect.value : 'buffalo_l',
+    scan_mode: scanModeEl ? scanModeEl.value : 'both',
   };
 
   try {
@@ -193,9 +198,9 @@ form.addEventListener('submit', async (e) => {
       };
     }
 
-    // In-page result video
+    // Export link for annotated video (inline player removed)
     if (out.output_video_url) {
-      resultVideoEl.src = out.output_video_url;
+      if (resultVideoEl) resultVideoEl.src = out.output_video_url;
       videoLinkEl.href = out.output_video_url;
     }
     if (out.detection_json_url) jsonLinkEl.href = out.detection_json_url;
@@ -285,7 +290,9 @@ async function renderResultsFromVideoId(videoId) {
       li.textContent = `${label}: ${value ?? '—'}`;
       summaryListEl.appendChild(li);
     }
-    const entries = Object.entries(objectsIndex).map(([cls, framesMap]) => [cls, Object.keys(framesMap).length]);
+    const entries = Object.entries(objectsIndex)
+      .filter(([cls]) => cls !== 'face')
+      .map(([cls, framesMap]) => [cls, Object.keys(framesMap).length]);
     entries.sort((a,b)=>b[1]-a[1]);
     objectsListEl.innerHTML = '';
     for (const [cls, count] of entries) {
@@ -298,6 +305,27 @@ async function renderResultsFromVideoId(videoId) {
       li.addEventListener('click', () => openModalForClass(cls));
       li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openModalForClass(cls); } });
       objectsListEl.appendChild(li);
+    }
+    // Detected Faces widget
+    if (facesListEl) {
+      facesListEl.innerHTML = '';
+      const faceCount = totalFaceDetections || 0;
+      if (faceCount > 0 && objectsIndex['face']) {
+        const li = document.createElement('li');
+        li.className = 'clickable';
+        li.setAttribute('role','button');
+        li.setAttribute('tabindex','0');
+        li.dataset.cls = 'face';
+        li.textContent = `Face (${faceCount})`;
+        li.addEventListener('click', () => openModalForClass('face'));
+        li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openModalForClass('face'); } });
+        facesListEl.appendChild(li);
+      } else {
+        const li = document.createElement('li');
+        li.className = 'faces-empty';
+        li.textContent = 'No faces detected';
+        facesListEl.appendChild(li);
+      }
     }
     resultsEl.hidden = false;
   } catch (e) {

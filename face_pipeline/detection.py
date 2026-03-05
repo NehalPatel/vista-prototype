@@ -1,14 +1,26 @@
-from typing import List, Dict, Any, Tuple
+from __future__ import annotations
+
+from typing import List, Dict, Any, Tuple, Union
 import os
 
 import numpy as np
 import cv2
 
 
-def _get_providers(device: str) -> List[str]:
-    # Default to ONNX Runtime providers expected by insightface
-    if device == "cuda":
-        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+def _get_onnx_providers() -> List[str]:
+    """Return ONNX execution providers based on actual availability.
+
+    Mirrors the logic from the working vista-face-recognition project:
+    - If CUDAExecutionProvider is available, use CUDA + CPU.
+    - Otherwise fall back to CPU only.
+    """
+    try:
+        import onnxruntime as ort  # type: ignore
+
+        if "CUDAExecutionProvider" in getattr(ort, "get_available_providers", lambda: [])():
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    except Exception:
+        pass
     return ["CPUExecutionProvider"]
 
 
@@ -34,10 +46,11 @@ def load_detector(
         ) from e
 
     name = model_name if model_name in FACE_MODEL_CHOICES else "buffalo_l"
-    providers = _get_providers(device)
+    providers = _get_onnx_providers()
     app = FaceAnalysis(name=name, providers=providers)
-    ctx_id = 0 if device == "cuda" else -1
-    app.prepare(ctx_id=ctx_id, det_size=det_size)
+    # Match vista-face-recognition: always use ctx_id=0 (they use prepare(ctx_id=0, det_size=(640, 640)))
+    app.prepare(ctx_id=0, det_size=det_size)
+    print(f"[vista-prototype] Face detector ready: model={name}, providers={providers}, det_size={det_size}")
     return app
 
 
@@ -52,12 +65,23 @@ def _get_face_attr(face: Any, key: str, default: Any = None) -> Any:
         return default
 
 
-def detect_faces(detector, frame_bgr: np.ndarray, conf_thresh: float = 0.5) -> List[Dict[str, Any]]:
+def detect_faces(
+    detector: Any,
+    frame_bgr_or_path: Union[np.ndarray, str],
+    conf_thresh: float = 0.5,
+) -> List[Dict[str, Any]]:
     """Run face detection and extract bbox, confidence, and landmarks when available.
 
+    frame_bgr_or_path: BGR image (numpy array) or path to image file; path matches vista-face-recognition.
     Returns list of dicts: {bbox, confidence, landmarks(optional), face_obj}
     InsightFace Face objects may be object- or dict-like; we support both.
     """
+    if isinstance(frame_bgr_or_path, str):
+        frame_bgr = cv2.imread(frame_bgr_or_path)
+        if frame_bgr is None:
+            return []
+    else:
+        frame_bgr = frame_bgr_or_path
     faces = detector.get(frame_bgr)
     results: List[Dict[str, Any]] = []
     h, w = frame_bgr.shape[:2]
