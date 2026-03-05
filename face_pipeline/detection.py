@@ -48,9 +48,8 @@ def load_detector(
     name = model_name if model_name in FACE_MODEL_CHOICES else "buffalo_l"
     providers = _get_onnx_providers()
     app = FaceAnalysis(name=name, providers=providers)
-    # Match vista-face-recognition: always use ctx_id=0 (they use prepare(ctx_id=0, det_size=(640, 640)))
+    # Match vista-face-recognition: use ctx_id=0 with det_size=(640, 640)
     app.prepare(ctx_id=0, det_size=det_size)
-    print(f"[vista-prototype] Face detector ready: model={name}, providers={providers}, det_size={det_size}")
     return app
 
 
@@ -82,6 +81,7 @@ def detect_faces(
             return []
     else:
         frame_bgr = frame_bgr_or_path
+
     faces = detector.get(frame_bgr)
     results: List[Dict[str, Any]] = []
     h, w = frame_bgr.shape[:2]

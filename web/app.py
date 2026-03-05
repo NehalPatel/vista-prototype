@@ -175,6 +175,7 @@ def api_process():
             os.path.isdir(paths['processed_frames']) and any(os.scandir(paths['processed_frames']))
         )
     ):
+        print(f"[trace] Returning CACHED results (force_rescan={force_rescan})")
         meta = get_video_metadata(url)
         total_frames = 0
         total_dets = 0
@@ -221,6 +222,7 @@ def api_process():
     run_stats = {}
 
     try:
+        print("[trace] Starting fresh run (download -> frames -> detection -> face)")
         # Download video (required)
         t0 = time.perf_counter()
         video_path = download_video(url, VIDEOS_DIR)
@@ -305,7 +307,9 @@ def api_process():
         face_model_name = payload.get("face_model", "buffalo_l")
         faces_by_frame: dict = {}
         total_face_detections = 0
+        print(f"[trace] scan_mode={scan_mode!r} run_objects={run_objects} run_faces={run_faces}")
         if run_faces:
+            print("[trace] Calling run_face_detection(...)")
             t_face = time.perf_counter()
             try:
                 face_conf_threshold = float(payload.get("face_conf_threshold", 0.5))

@@ -29,9 +29,12 @@ def run_face_detection(
     - Returns faces_by_frame: { frame_filename: [ {"bbox": [x1,y1,x2,y2], "confidence": float}, ... ] }
     - If insightface is not available, returns {} and does not modify images.
     """
+    print("[trace] run_face_detection() entered")
     try:
         from face_pipeline.detection import load_detector, detect_faces
+        print("[trace] face_pipeline.detection import OK")
     except Exception as e:
+        print(f"[trace] Face detection skipped: insightface not available: {e}")
         logger.warning("Face detection skipped: insightface not available: %s", e)
         return {}
 
@@ -39,16 +42,18 @@ def run_face_detection(
     try:
         # Match working vista-face-recognition project: det_size=(640, 640)
         detector = load_detector(device=device, model_name=face_model, det_size=(640, 640))
+        print("[trace] load_detector() OK")
     except Exception as e:
+        print(f"[trace] Face detection skipped: failed to load detector: {e}")
         logger.warning("Face detection skipped: failed to load detector: %s", e)
         return {}
 
     import cv2
 
     list_dir = source_frames_dir if source_frames_dir and os.path.isdir(source_frames_dir) else annotated_frames_dir
-    for fname in sorted(os.listdir(list_dir)):
-        if not fname.lower().endswith((".jpg", ".jpeg", ".png")):
-            continue
+    frame_files = [f for f in sorted(os.listdir(list_dir)) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+    print(f"[trace] list_dir={list_dir!r} frame_count={len(frame_files)} first={frame_files[0] if frame_files else None!r}")
+    for fname in frame_files:
         path_for_detection = os.path.join(source_frames_dir, fname) if source_frames_dir else os.path.join(annotated_frames_dir, fname)
         path_annotated = os.path.join(annotated_frames_dir, fname)
         if not os.path.isfile(path_for_detection):

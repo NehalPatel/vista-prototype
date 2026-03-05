@@ -7,8 +7,8 @@ opencv-python>=4.5
 pytube
 yt-dlp
 
-# Face pipeline (instruction_face.txt) – for face detection in videos, uncomment insightface
-# insightface  # optional: pip install insightface (may need onnxruntime-gpu for GPU)
+# Face pipeline – required for face detection in the web UI
+insightface
 onnxruntime
 opencv-python>=4.5
 numpy
