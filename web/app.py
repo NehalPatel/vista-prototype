@@ -260,6 +260,19 @@ def api_process():
         by_class: dict = {}
         run_stats["detection_sec"] = 0.0
 
+        # Detect device once (GPU if available) and use for both YOLO and face detection
+        device = "cpu"
+        gpu_name = None
+        try:
+            import torch  # type: ignore
+            if torch.cuda.is_available():
+                device = "cuda"
+                gpu_name = torch.cuda.get_device_name(0)
+        except Exception:
+            pass
+        run_stats["device"] = device
+        run_stats["gpu_name"] = gpu_name
+
         # Object detection (YOLO) – only when enabled
         if run_objects:
             model_path = _resolve_model_path(object_model, BASE_DIR)
@@ -269,6 +282,7 @@ def api_process():
                 detections_dir=paths['processed_frames'],
                 model_path=model_path,
                 conf_threshold=conf_threshold,
+                device=device,
             )
             run_stats["detection_sec"] = round(time.perf_counter() - t2, 2)
             total_dets, by_class = generate_summary(results_by_frame)
@@ -289,19 +303,6 @@ def api_process():
                 results_by_frame[fname] = []
 
         total_frames = len(results_by_frame)
-
-        # Device used for detection
-        device = "cpu"
-        gpu_name = None
-        try:
-            import torch  # type: ignore
-            if torch.cuda.is_available():
-                device = "cuda"
-                gpu_name = torch.cuda.get_device_name(0)
-        except Exception:
-            pass
-        run_stats["device"] = device
-        run_stats["gpu_name"] = gpu_name
 
         # Face detection: run on original frames for better recall, draw on annotated frames (only when enabled)
         face_model_name = payload.get("face_model", "buffalo_l")

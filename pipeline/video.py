@@ -67,13 +67,19 @@ def download_video(url: str, output_dir: str) -> Optional[str]:
             return None
 
 
-def extract_frames(video_path: str, frames_dir: str) -> List[str]:
+def extract_frames(
+    video_path: str,
+    frames_dir: str,
+    start_seconds: Optional[float] = None,
+    end_seconds: Optional[float] = None,
+) -> List[str]:
     """Extract one frame per second from the video and save as JPEG files.
 
+    Optionally limit to a time range with start_seconds and end_seconds (inclusive start, exclusive end).
     Returns a list of saved frame filenames (basename only).
     """
     safe_print("Extracting frames (1 per second)...")
-    
+
     # Clear existing frames to prevent merging with previous runs
     if os.path.exists(frames_dir):
         for f in os.listdir(frames_dir):
@@ -89,13 +95,26 @@ def extract_frames(video_path: str, frames_dir: str) -> List[str]:
         return saved_frames
 
     try:
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        fps_int = max(1, int(round(fps or 1)))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 1.0
+        fps_int = max(1, int(round(fps)))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
-        frame_index = 0
+        start_frame = 0
+        end_frame = None  # None = read to end
+        if start_seconds is not None and start_seconds >= 0:
+            start_frame = int(start_seconds * fps)
+        if end_seconds is not None and end_seconds > (start_seconds or 0):
+            end_frame = int(end_seconds * fps)
+
+        if start_frame > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+
+        frame_index = start_frame
         save_index = 1
 
         while True:
+            if end_frame is not None and frame_index >= end_frame:
+                break
             ret, frame = cap.read()
             if not ret:
                 break

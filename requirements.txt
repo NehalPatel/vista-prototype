@@ -1,7 +1,9 @@
 # Web app
 flask>=2.0
 
-# Video / pipeline (YOLO, download, render)
+# Video / pipeline (YOLO, download, render) – YOLO uses PyTorch for inference
+torch
+torchvision
 ultralytics>=8.0
 opencv-python>=4.5
 pytube
@@ -15,3 +17,7 @@ numpy
 scikit-image
 tqdm
 scipy
+
+# GPU: Default pip installs are often CPU-only. For CUDA GPU:
+#   PyTorch (YOLO): https://pytorch.org – e.g. pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+#   ONNX (InsightFace): pip install onnxruntime-gpu  (replace onnxruntime)

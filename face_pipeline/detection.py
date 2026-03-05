@@ -7,17 +7,19 @@ import numpy as np
 import cv2
 
 
-def _get_onnx_providers() -> List[str]:
-    """Return ONNX execution providers based on actual availability.
+def _get_onnx_providers(device: str = "cuda") -> List[str]:
+    """Return ONNX execution providers for the requested device.
 
-    Mirrors the logic from the working vista-face-recognition project:
-    - If CUDAExecutionProvider is available, use CUDA + CPU.
-    - Otherwise fall back to CPU only.
+    - If device is 'cpu', returns CPU only.
+    - If device is 'cuda', uses CUDA + CPU when CUDAExecutionProvider is available
+      (requires onnxruntime-gpu); otherwise falls back to CPU.
     """
+    if device == "cpu":
+        return ["CPUExecutionProvider"]
     try:
         import onnxruntime as ort  # type: ignore
-
-        if "CUDAExecutionProvider" in getattr(ort, "get_available_providers", lambda: [])():
+        providers = getattr(ort, "get_available_providers", lambda: [])()
+        if "CUDAExecutionProvider" in providers:
             return ["CUDAExecutionProvider", "CPUExecutionProvider"]
     except Exception:
         pass
@@ -46,10 +48,11 @@ def load_detector(
         ) from e
 
     name = model_name if model_name in FACE_MODEL_CHOICES else "buffalo_l"
-    providers = _get_onnx_providers()
+    providers = _get_onnx_providers(device)
     app = FaceAnalysis(name=name, providers=providers)
-    # Match vista-face-recognition: use ctx_id=0 with det_size=(640, 640)
-    app.prepare(ctx_id=0, det_size=det_size)
+    # ctx_id: 0 = GPU 0, -1 = CPU (InsightFace convention)
+    ctx_id = 0 if device == "cuda" else -1
+    app.prepare(ctx_id=ctx_id, det_size=det_size)
     return app
 
 
