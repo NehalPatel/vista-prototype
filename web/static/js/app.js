@@ -51,6 +51,17 @@ let processedFramesBase = '';
 let zoomLevel = 1;
 const frameIntervalSec = 1;
 
+function prettifyLabel(s) {
+  const str = String(s || '').trim();
+  if (!str) return '—';
+  // Replace separators with spaces, collapse whitespace, title-case words.
+  const spaced = str.replace(/[_\-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return spaced
+    .split(' ')
+    .map((w) => (w ? (w.charAt(0).toUpperCase() + w.slice(1)) : w))
+    .join(' ');
+}
+
 function secondsToHms(sec) {
   if (!sec && sec !== 0) return '';
   const h = Math.floor(sec / 3600);
@@ -253,11 +264,13 @@ async function renderResultsFromVideoId(videoId) {
     const byClass = {};
     let totalFrames = 0;
     let totalDetections = 0;
+    let totalMonumentDetections = 0;
     const map = {};
     for (const f of framesArr) {
       const fname = f.frame;
       const dets = Array.isArray(f.detections) ? f.detections : [];
       const faces = Array.isArray(f.faces) ? f.faces : [];
+      const monument = (f && typeof f.monument === 'object' && f.monument) ? f.monument : null;
       map[fname] = dets;
       totalFrames += 1;
       totalDetections += dets.length;
@@ -273,6 +286,15 @@ async function renderResultsFromVideoId(videoId) {
         if (!objectsIndex['face']) objectsIndex['face'] = {};
         objectsIndex['face'][fname] = faces.map((fa) => ({ bbox: fa.bbox, conf: fa.confidence }));
       }
+      if (monument && monument.label && monument.label !== 'Unknown') {
+        const mConf = (typeof monument.confidence === 'number') ? monument.confidence : null;
+        const key = 'monument:' + String(monument.label);
+        totalMonumentDetections += 1;
+        byClass[key] = (byClass[key] || 0) + 1;
+        if (!objectsIndex[key]) objectsIndex[key] = {};
+        if (!objectsIndex[key][fname]) objectsIndex[key][fname] = [];
+        objectsIndex[key][fname].push({ bbox: monument.bbox || [], conf: mConf });
+      }
     }
     summaryListEl.innerHTML = '';
     const totalFaceDetections = (djData.frames || []).reduce((acc, fr) => acc + (Array.isArray(fr.faces) ? fr.faces.length : 0), 0);
@@ -285,6 +307,9 @@ async function renderResultsFromVideoId(videoId) {
       face_model: djData.face_model || (faceModelSelect ? faceModelSelect.value : 'buffalo_l'),
     };
     const items = buildSummaryItems(sumForSummary, objectModelSelect, faceModelSelect, djData.run_stats);
+    if (totalMonumentDetections > 0) {
+      items.splice(3, 0, ['Total monument detections', totalMonumentDetections]);
+    }
     for (const [label, value] of items) {
       const li = document.createElement('li');
       li.textContent = `${label}: ${value ?? '—'}`;
@@ -353,7 +378,11 @@ function formatTimestampFromFrame(name) {
 function displayLabelForClass(cls) {
   if (typeof cls !== 'string') return cls;
   if (cls.toLowerCase() === 'face') return 'Face';
-  return cls.charAt(0).toUpperCase() + cls.slice(1).toLowerCase();
+  if (cls.startsWith('monument:')) {
+    const raw = cls.slice('monument:'.length);
+    return 'Monument: ' + prettifyLabel(raw);
+  }
+  return prettifyLabel(cls);
 }
 
 function openModalForClass(cls) {

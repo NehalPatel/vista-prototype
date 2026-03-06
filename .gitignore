@@ -31,7 +31,7 @@ vista-prototype/results/
 vista-prototype/videos/
 vista-prototype/faces/
 vista-prototype/face_results/
-vista-prototype/known_faces/embeddings/
+vista-prototype/known_faces/
 # Training data (images – do not push to GitHub)
 vista-prototype/training_data/
 vista-prototype/training_data/dataset/

@@ -21,6 +21,9 @@ from pipeline.paths import (
     TRAINING_MONUMENTS_DIR,
     TRAINING_DATASET_DIR,
     MONUMENT_MODEL_DIR,
+    RESULTS_DIR,
+    FRAMES_DIR,
+    VIDEOS_DIR,
 )
 from pipeline.utils import (
     extract_video_id_from_url,
@@ -53,10 +56,10 @@ except Exception:
 
 app = Flask(__name__, static_folder='static', template_folder='templates')
 
-BASE_DIR = os.path.abspath(os.getcwd())
-RESULTS_BASE = os.path.join(BASE_DIR, 'vista-prototype', 'results')
-FRAMES_DIR = os.path.join(BASE_DIR, 'vista-prototype', 'frames')
-VIDEOS_DIR = os.path.join(BASE_DIR, 'vista-prototype', 'videos')
+# Use repo-root anchored paths (not the runtime CWD) so starting the server
+# from `web/` or any directory still uses the same `vista-prototype/` data.
+BASE_DIR = PARENT_DIR
+RESULTS_BASE = RESULTS_DIR
 
 # Ensure runtime directories (including training_data) exist at startup
 ensure_directories()
@@ -560,32 +563,44 @@ def api_process():
             total_face_detections = sum(len(v) for v in faces_by_frame.values())
 
         # Monument recognition (if model was built from training_data/dataset or monuments)
+        # Uses the same confidence_threshold as object detection (form "Confidence threshold").
         monuments_by_frame = {}
         if load_monument_model(MONUMENT_MODEL_DIR) is not None:
             try:
                 t_mon = time.perf_counter()
-                monument_conf = float(payload.get("monument_conf_threshold", 0.5))
                 monuments_by_frame = run_monument_recognition(
                     paths["processed_frames"],
                     MONUMENT_MODEL_DIR,
                     device=device,
-                    confidence_threshold=monument_conf,
+                    confidence_threshold=conf_threshold,
                 )
                 run_stats["monument_recognition_sec"] = round(time.perf_counter() - t_mon, 2)
-                # Draw monument label on each frame
+                # Draw monument label on each frame (only when conf >= confidence_threshold)
                 import cv2
                 for fname, info in monuments_by_frame.items():
                     label = info.get("label")
                     conf = info.get("confidence", 0)
-                    if label and label != "Unknown" and conf >= monument_conf:
+                    if label and label != "Unknown" and conf >= conf_threshold:
                         path_img = os.path.join(paths["processed_frames"], fname)
                         img = cv2.imread(path_img)
                         if img is not None:
+                            h_img, w_img = img.shape[:2]
+                            margin = max(6, int(round(0.02 * min(h_img, w_img))))
+                            x1, y1 = margin, margin
+                            x2, y2 = max(x1 + 1, w_img - margin), max(y1 + 1, h_img - margin)
+                            # Pseudo bounding box: this monument model is a frame-level classifier,
+                            # so we highlight the frame region rather than a true detected monument box.
+                            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 3)
                             cv2.putText(
                                 img, f"Monument: {label} ({conf:.2f})",
                                 (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2,
                             )
                             cv2.imwrite(path_img, img)
+                            # Persist bbox into JSON results so UI can show it in the modal.
+                            try:
+                                info["bbox"] = [int(x1), int(y1), int(x2), int(y2)]
+                            except Exception:
+                                pass
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).warning("Monument recognition failed: %s", e)

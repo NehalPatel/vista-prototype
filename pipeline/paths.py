@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 
 
-ROOT_DIR = os.path.abspath(os.getcwd())
+_THIS_DIR = os.path.dirname(__file__)
+# Anchor paths to the repo root (not the runtime CWD) so the web app can be
+# launched from anywhere (e.g. `web/`) without breaking model/data directories.
+ROOT_DIR = os.path.abspath(os.path.join(_THIS_DIR, ".."))
 VISTA_DIR = os.path.join(ROOT_DIR, "vista-prototype")
 VIDEOS_DIR = os.path.join(VISTA_DIR, "videos")
 FRAMES_DIR = os.path.join(VISTA_DIR, "frames")
