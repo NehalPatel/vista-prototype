@@ -2,6 +2,7 @@
 
 Runs InsightFace face detection on each image in a directory (e.g. YOLO-annotated
 frames), draws face boxes, and returns per-frame face counts and bboxes for the API.
+If known_faces embeddings exist, runs recognition and draws celebrity names.
 If insightface is not installed, returns empty results and skips drawing.
 """
 
@@ -12,6 +13,9 @@ import os
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Recognition thresholds: same <= 0.6, maybe <= 0.8
+RECOGNITION_THRESHOLDS = {"same": 0.6, "maybe": 0.8}
 
 
 def run_face_detection(
@@ -25,8 +29,8 @@ def run_face_detection(
 
     - If source_frames_dir is set, runs InsightFace on those (clean) frames for better detection,
       then draws cyan face boxes on the corresponding images in annotated_frames_dir.
-    - Otherwise runs detection on images in annotated_frames_dir and overwrites them.
-    - Returns faces_by_frame: { frame_filename: [ {"bbox": [x1,y1,x2,y2], "confidence": float}, ... ] }
+    - If known_faces/embeddings exist, runs recognition and draws celebrity names on boxes.
+    - Returns faces_by_frame: { frame_filename: [ {"bbox", "confidence", "label" (if recognition)}, ... ] }
     - If insightface is not available, returns {} and does not modify images.
     """
     print("[trace] run_face_detection() entered")
@@ -48,6 +52,20 @@ def run_face_detection(
         logger.warning("Face detection skipped: failed to load detector: %s", e)
         return {}
 
+    # Optional: load known faces for recognition (Training Data Manager datasets)
+    known_faces: List[tuple] = []
+    try:
+        from face_pipeline.paths import KNOWN_FACES_DIR
+        from face_pipeline.recognition import load_known_embeddings, match
+        from face_pipeline.embeddings import get_embedding
+        known_dir = str(KNOWN_FACES_DIR)
+        if os.path.isdir(os.path.join(known_dir, "embeddings")):
+            known_faces = load_known_embeddings(known_dir)
+            if known_faces:
+                print("[trace] face recognition enabled:", len(known_faces), "known embeddings")
+    except Exception as e:
+        logger.debug("Face recognition skipped (no known_faces or import error): %s", e)
+
     import cv2
 
     list_dir = source_frames_dir if source_frames_dir and os.path.isdir(source_frames_dir) else annotated_frames_dir
@@ -60,22 +78,34 @@ def run_face_detection(
             continue
         # Pass path (like vista-face-recognition) so detector reads image the same way
         dets = detect_faces(detector, path_for_detection, conf_thresh=face_conf_threshold)
-        records = [
-            {"bbox": d["bbox"], "confidence": round(float(d["confidence"]), 4)}
-            for d in dets
-        ]
+        records: List[Dict[str, Any]] = []
+        for d in dets:
+            rec = {"bbox": d["bbox"], "confidence": round(float(d["confidence"]), 4)}
+            if known_faces and "face_obj" in d:
+                emb = get_embedding(d["face_obj"]) if known_faces else None
+                if emb is not None:
+                    m = match(emb, known_faces, RECOGNITION_THRESHOLDS)
+                    rec["label"] = m.get("label", "Unknown")
+                    rec["recognition_confidence"] = round(float(m.get("confidence", 0)), 4)
+                else:
+                    rec["label"] = "Unknown"
+            else:
+                rec["label"] = "Unknown"
+            records.append(rec)
         faces_by_frame[fname] = records
         if not dets and len(faces_by_frame) == 1:
             logger.info("Face detection ran but found no faces in first frame (threshold=%.2f). Check video content or lower face_conf_threshold.", face_conf_threshold)
         # Draw face boxes on the annotated image (so output video has both YOLO and face boxes)
         img_annotated = cv2.imread(path_annotated)
         if img_annotated is not None:
-            for d in dets:
+            for d, rec in zip(dets, records):
                 x1, y1, x2, y2 = d["bbox"]
                 cv2.rectangle(img_annotated, (x1, y1), (x2, y2), (255, 255, 0), 2)
-                conf = d["confidence"]
+                label = rec.get("label", "Unknown")
+                conf = rec.get("confidence", 0)
+                text = f"{label} {conf:.2f}" if label != "Unknown" else f"face {conf:.2f}"
                 cv2.putText(
-                    img_annotated, f"face {conf:.2f}", (x1, y1 - 4),
+                    img_annotated, text, (x1, y1 - 4),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1,
                 )
             cv2.imwrite(path_annotated, img_annotated)

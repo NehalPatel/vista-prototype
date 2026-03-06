@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Training Data Manager | VISTA</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <style>
+    .training-tabs { display: flex; gap: 0.25rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+    .training-tab { padding: 0.75rem 1.25rem; border: none; background: none; cursor: pointer; font-weight: 500; color: var(--text-secondary); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+    .training-tab:hover { color: var(--text-primary); }
+    .training-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .training-panel { display: none; padding: 1rem; }
+    .training-panel.active { display: block; }
+    .preview-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 0.5rem; margin-top: 0.75rem; }
+    .preview-item { position: relative; aspect-ratio: 1; border-radius: var(--radius-md); overflow: hidden; background: var(--bg-panel); }
+    .preview-item img { width: 100%; height: 100%; object-fit: cover; }
+    .preview-item .remove-preview { position: absolute; top: 2px; right: 2px; width: 24px; height: 24px; border: none; border-radius: 50%; background: var(--error); color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+    .dataset-list { margin-top: 1rem; }
+    .dataset-list ul { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .dataset-list li { display: flex; align-items: center; gap: 0.35rem; padding: 0.35rem 0.75rem; background: var(--bg-panel); border-radius: var(--radius-md); font-size: 0.875rem; }
+    .dataset-list .material-symbols-rounded { font-size: 18px; color: var(--text-muted); }
+    .dataset-item { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .dataset-item .name { font-weight: 500; }
+    .dataset-item .manage-btn { padding: 0.2rem 0.5rem; font-size: 0.75rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-surface); cursor: pointer; }
+    .dataset-item .manage-btn:hover { background: var(--bg-panel); }
+    .dataset-images { margin-top: 0.5rem; padding-left: 1rem; border-left: 2px solid var(--border); }
+    .dataset-images .img-row { display: flex; align-items: center; justify-content: space-between; padding: 0.25rem 0; font-size: 0.8rem; }
+    .dataset-images .img-row button { padding: 0.15rem 0.4rem; font-size: 0.7rem; color: var(--error); border: 1px solid var(--error); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
+    .dataset-images .img-row button:hover { background: var(--error); color: white; }
+  </style>
+</head>
+
+<body>
+  <header class="app-header">
+    <div class="container header-content">
+      <div class="brand">
+        <a href="/">
+          <img src="/static/images/logo.png" alt="VISTA Logo" class="logo-img" />
+        </a>
+        <div class="brand-text">
+          <h1 class="logo-title">VISTA</h1>
+          <p class="logo-subtitle">Video Intelligence Search & Tagging Assistant</p>
+        </div>
+      </div>
+      <nav class="nav-links">
+        <a href="/" class="nav-link">Dashboard</a>
+        <a href="/training" class="nav-link active">Training Data Manager</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="input-section">
+      <div class="container">
+        <div class="card input-card">
+          <div class="card-header">
+            <span class="material-symbols-rounded icon-large">dataset</span>
+            <h2>Training Data Manager</h2>
+            <p>Upload images to train face recognition (celebrities) and monument datasets.</p>
+          </div>
+
+          <div class="training-tabs">
+            <button type="button" class="training-tab active" data-tab="face" aria-selected="true">Face Training Dataset</button>
+            <button type="button" class="training-tab" data-tab="monument" aria-selected="false">Monument Dataset</button>
+          </div>
+
+          <div id="panel-face" class="training-panel active">
+            <form id="form-face" class="training-form">
+              <div class="form-group">
+                <label for="face-name">Celebrity Name</label>
+                <div class="input-wrapper">
+                  <span class="material-symbols-rounded input-icon">person</span>
+                  <input id="face-name" name="name" type="text" placeholder="e.g. Celebrity Name" required />
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Upload images (multiple)</label>
+                <div class="input-wrapper">
+                  <input id="face-files" name="files" type="file" accept="image/jpeg,image/png,image/jpg" multiple />
+                </div>
+                <div id="face-preview" class="preview-grid"></div>
+              </div>
+              <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                <button type="submit" class="btn-primary" id="face-save-btn">
+                  <span class="material-symbols-rounded">save</span> Save dataset
+                </button>
+                <button type="button" class="btn-primary" id="face-train-btn" title="Register faces for video recognition">
+                  <span class="material-symbols-rounded">psychology</span> Train / Register
+                </button>
+              </div>
+              <div id="face-status" class="status-text" role="status"></div>
+              <div id="face-error" class="alert-box" role="alert" hidden><span class="material-symbols-rounded">error</span><span id="face-error-msg"></span></div>
+            </form>
+            <div class="dataset-list">
+              <h4 class="card-header-small" style="margin-top: 1rem;"><span class="material-symbols-rounded">face</span> Face datasets</h4>
+              <div id="face-datasets-list"></div>
+            </div>
+          </div>
+
+          <div id="panel-monument" class="training-panel">
+            <form id="form-monument" class="training-form">
+              <div class="form-group">
+                <label for="monument-name">Monument Name</label>
+                <div class="input-wrapper">
+                  <span class="material-symbols-rounded input-icon">landscape</span>
+                  <input id="monument-name" name="name" type="text" placeholder="e.g. Taj Mahal, Eiffel Tower" required />
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Upload images (multiple)</label>
+                <div class="input-wrapper">
+                  <input id="monument-files" name="files" type="file" accept="image/jpeg,image/png,image/jpg" multiple />
+                </div>
+                <div id="monument-preview" class="preview-grid"></div>
+              </div>
+              <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                <button type="submit" class="btn-primary" id="monument-save-btn">
+                  <span class="material-symbols-rounded">save</span> Save dataset
+                </button>
+                <button type="button" class="btn-primary" id="monument-build-btn" title="Train classifier from training_data/dataset and monuments">
+                  <span class="material-symbols-rounded">psychology</span> Build / Train monument model
+                </button>
+              </div>
+              <div id="monument-status" class="status-text" role="status"></div>
+              <div id="monument-error" class="alert-box" role="alert" hidden><span class="material-symbols-rounded">error</span><span id="monument-error-msg"></span></div>
+            </form>
+            <div class="dataset-list">
+              <h4 class="card-header-small" style="margin-top: 1rem;"><span class="material-symbols-rounded">landscape</span> Monument datasets</h4>
+              <div id="monument-datasets-list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <div class="container">
+      <p>&copy; 2025 VISTA Project. All rights reserved.</p>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      const tabButtons = document.querySelectorAll('.training-tab');
+      const panels = document.querySelectorAll('.training-panel');
+
+      tabButtons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const tab = this.getAttribute('data-tab');
+          tabButtons.forEach(function (b) { b.classList.remove('active'); b.setAttribute('aria-selected', 'false'); });
+          panels.forEach(function (p) { p.classList.remove('active'); });
+          this.classList.add('active');
+          this.setAttribute('aria-selected', 'true');
+          const panel = document.getElementById('panel-' + tab);
+          if (panel) panel.classList.add('active');
+        });
+      });
+
+      function previewFiles(inputId, previewId) {
+        const input = document.getElementById(inputId);
+        const preview = document.getElementById(previewId);
+        if (!input || !preview) return;
+        input.addEventListener('change', function () {
+          preview.innerHTML = '';
+          const files = Array.from(this.files || []);
+          files.forEach(function (file, i) {
+            const div = document.createElement('div');
+            div.className = 'preview-item';
+            div.dataset.index = i;
+            const img = document.createElement('img');
+            img.src = URL.createObjectURL(file);
+            const rm = document.createElement('button');
+            rm.type = 'button';
+            rm.className = 'remove-preview';
+            rm.textContent = '×';
+            rm.setAttribute('aria-label', 'Remove');
+            rm.addEventListener('click', function () {
+              div.remove();
+            });
+            div.appendChild(img);
+            div.appendChild(rm);
+            preview.appendChild(div);
+          });
+        });
+      }
+      previewFiles('face-files', 'face-preview');
+      previewFiles('monument-files', 'monument-preview');
+
+      function showStatus(id, msg) {
+        const el = document.getElementById(id);
+        if (el) { el.textContent = msg; el.hidden = false; }
+      }
+      function showError(id, msg) {
+        const el = document.getElementById(id);
+        const box = document.getElementById(id.replace('-status', '-error'));
+        if (el) el.textContent = '';
+        if (box) { var span = box.querySelector('#face-error-msg') || box.querySelector('#monument-error-msg') || box.querySelector('span:last-child'); if (span) span.textContent = msg; box.hidden = false; }
+      }
+      function clearError(id) {
+        const box = document.getElementById(id.replace('-status', '-error'));
+        if (box) box.hidden = true;
+      }
+
+      function renderDatasetItem(d, type) {
+        const div = document.createElement('div');
+        div.className = 'dataset-item';
+        div.innerHTML = '<span class="material-symbols-rounded">folder</span><span class="name">' + escapeHtml(d.name) + '</span> <span>(' + d.count + ')</span><button type="button" class="manage-btn" data-type="' + type + '" data-name="' + escapeHtml(d.name) + '">Manage</button>';
+        const container = document.createElement('div');
+        container.className = 'dataset-images';
+        container.style.display = 'none';
+        div.appendChild(container);
+        div.querySelector('.manage-btn').addEventListener('click', function () {
+          if (container.style.display === 'none') {
+            container.style.display = 'block';
+            container.innerHTML = 'Loading...';
+            fetch('/api/training/datasets/' + type + '/' + encodeURIComponent(d.name))
+              .then(function (r) { return r.json(); })
+              .then(function (res) {
+                if (res.images && res.images.length) {
+                  container.innerHTML = res.images.map(function (fn) {
+                    return '<div class="img-row"><span>' + escapeHtml(fn) + '</span><button type="button" data-filename="' + escapeHtml(fn) + '" data-type="' + type + '" data-name="' + escapeHtml(d.name) + '">Delete</button></div>';
+                  }).join('');
+                  container.querySelectorAll('.img-row button').forEach(function (btn) {
+                    btn.addEventListener('click', function () {
+                      var fn = this.getAttribute('data-filename');
+                      var t = this.getAttribute('data-type');
+                      var n = this.getAttribute('data-name');
+                      fetch('/api/training/image', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: t, name: n, filename: fn }) })
+                        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+                        .then(function (x) {
+                          if (x.ok) loadDatasets();
+                          else alert(x.j.error || 'Delete failed');
+                        });
+                    });
+                  });
+                } else {
+                  container.innerHTML = '<p>No images.</p>';
+                }
+              })
+              .catch(function () { container.innerHTML = '<p>Failed to load.</p>'; });
+          } else {
+            container.style.display = 'none';
+          }
+        });
+        return div;
+      }
+      function loadDatasets() {
+        fetch('/api/training/datasets')
+          .then(function (r) { return r.json(); })
+          .then(function (data) {
+            const faceList = document.getElementById('face-datasets-list');
+            const monList = document.getElementById('monument-datasets-list');
+            if (faceList) {
+              if ((data.faces || []).length === 0) {
+                faceList.innerHTML = '<p>No face datasets yet.</p>';
+              } else {
+                faceList.innerHTML = '';
+                (data.faces || []).forEach(function (d) { faceList.appendChild(renderDatasetItem(d, 'face')); });
+              }
+            }
+            if (monList) {
+              if ((data.monuments || []).length === 0) {
+                monList.innerHTML = '<p>No monument datasets yet.</p>';
+              } else {
+                monList.innerHTML = '';
+                (data.monuments || []).forEach(function (d) { monList.appendChild(renderDatasetItem(d, 'monument')); });
+              }
+            }
+          })
+          .catch(function () {});
+      }
+      function escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+      }
+      loadDatasets();
+
+      document.getElementById('form-face').addEventListener('submit', function (e) {
+        e.preventDefault();
+        clearError('face-status');
+        const name = document.getElementById('face-name').value.trim();
+        const fileInput = document.getElementById('face-files');
+        if (!name) { showError('face-status', 'Enter a celebrity name.'); return; }
+        if (!fileInput.files.length) { showError('face-status', 'Select at least one image.'); return; }
+        const fd = new FormData();
+        fd.append('name', name);
+        fd.append('type', 'face');
+        for (let i = 0; i < fileInput.files.length; i++) fd.append('files', fileInput.files[i]);
+        showStatus('face-status', 'Uploading...');
+        document.getElementById('face-save-btn').disabled = true;
+        fetch('/api/training/upload', { method: 'POST', body: fd })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (x) {
+            document.getElementById('face-save-btn').disabled = false;
+            if (x.ok) {
+              showStatus('face-status', 'Saved ' + (x.j.saved || 0) + ' image(s).');
+              loadDatasets();
+              fileInput.value = '';
+              document.getElementById('face-preview').innerHTML = '';
+            } else {
+              showError('face-status', x.j.error || 'Upload failed.');
+            }
+          })
+          .catch(function () {
+            document.getElementById('face-save-btn').disabled = false;
+            showError('face-status', 'Network error.');
+          });
+      });
+
+      document.getElementById('face-train-btn').addEventListener('click', function () {
+        clearError('face-status');
+        const name = document.getElementById('face-name').value.trim();
+        showStatus('face-status', 'Training...');
+        this.disabled = true;
+        const body = name ? { celebrity_name: name } : { all: true };
+        fetch('/api/training/train-faces', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (x) {
+            document.getElementById('face-train-btn').disabled = false;
+            if (x.ok) {
+              showStatus('face-status', 'Registered ' + (x.j.registered || 0) + ' face(s).' + (x.j.errors && x.j.errors.length ? ' Warnings: ' + x.j.errors.join('; ') : ''));
+            } else {
+              showError('face-status', x.j.error || 'Training failed.');
+            }
+          })
+          .catch(function () {
+            document.getElementById('face-train-btn').disabled = false;
+            showError('face-status', 'Network error.');
+          });
+      });
+
+      document.getElementById('form-monument').addEventListener('submit', function (e) {
+        e.preventDefault();
+        clearError('monument-status');
+        const name = document.getElementById('monument-name').value.trim();
+        const fileInput = document.getElementById('monument-files');
+        if (!name) { showError('monument-status', 'Enter a monument name.'); return; }
+        if (!fileInput.files.length) { showError('monument-status', 'Select at least one image.'); return; }
+        const fd = new FormData();
+        fd.append('name', name);
+        fd.append('type', 'monument');
+        for (let i = 0; i < fileInput.files.length; i++) fd.append('files', fileInput.files[i]);
+        showStatus('monument-status', 'Uploading...');
+        document.getElementById('monument-save-btn').disabled = true;
+        fetch('/api/training/upload', { method: 'POST', body: fd })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (x) {
+            document.getElementById('monument-save-btn').disabled = false;
+            if (x.ok) {
+              showStatus('monument-status', 'Saved ' + (x.j.saved || 0) + ' image(s).');
+              loadDatasets();
+              fileInput.value = '';
+              document.getElementById('monument-preview').innerHTML = '';
+            } else {
+              showError('monument-status', x.j.error || 'Upload failed.');
+            }
+          })
+          .catch(function () {
+            document.getElementById('monument-save-btn').disabled = false;
+            showError('monument-status', 'Network error.');
+          });
+      });
+
+      document.getElementById('monument-build-btn').addEventListener('click', function () {
+        clearError('monument-status');
+        showStatus('monument-status', 'Building monument model (training on dataset + monuments)...');
+        this.disabled = true;
+        fetch('/api/training/build-monument-model', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+          .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+          .then(function (x) {
+            document.getElementById('monument-build-btn').disabled = false;
+            if (x.ok) {
+              showStatus('monument-status', 'Model built: ' + (x.j.n_classes || 0) + ' classes, ' + (x.j.n_samples || 0) + ' samples. ' + (x.j.class_names || []).join(', '));
+            } else {
+              showError('monument-status', x.j.error || 'Build failed.');
+            }
+          })
+          .catch(function () {
+            document.getElementById('monument-build-btn').disabled = false;
+            showError('monument-status', 'Network error.');
+          });
+      });
+    })();
+  </script>
+</body>
+
+</html>

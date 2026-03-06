@@ -32,4 +32,12 @@ vista-prototype/videos/
 vista-prototype/faces/
 vista-prototype/face_results/
 vista-prototype/known_faces/embeddings/
+# Training data (images – do not push to GitHub)
 vista-prototype/training_data/
+vista-prototype/training_data/dataset/
+vista-prototype/training_data/datasets/
+vista-prototype/training_data/faces/
+vista-prototype/training_data/monuments/
+vista-prototype/training_data/inbox_faces/
+vista-prototype/training_data/inbox_monuments/
+vista-prototype/monument_model/

@@ -20,6 +20,64 @@ def find_images(folder: str) -> List[str]:
     return sorted(files)
 
 
+def register_faces_from_folder(
+    images_dir: str,
+    label: str,
+    device: str = "cpu",
+    model_name: str = "buffalo_l",
+    conf_thresh: float = 0.8,
+    embeddings_dir: str | None = None,
+    labels_path: str | None = None,
+) -> tuple[int, str]:
+    """Register all faces from a directory under a single label (e.g. celebrity name).
+
+    Loads existing labels.json if present and merges new embeddings. Returns (count, error_message).
+    If count >= 0 and error_message is empty, success; else error_message describes the failure.
+    """
+    emb_dir = embeddings_dir or os.path.join(str(KNOWN_FACES_DIR), "embeddings")
+    labels_out = labels_path or os.path.join(str(KNOWN_FACES_DIR), "labels.json")
+    os.makedirs(emb_dir, exist_ok=True)
+
+    labels: dict = {}
+    if os.path.exists(labels_out):
+        try:
+            with open(labels_out, "r", encoding="utf-8") as f:
+                labels = json.load(f)
+        except Exception:
+            labels = {}
+
+    detector = load_detector(device=device, model_name=model_name)
+    images = find_images(images_dir)
+    if not images:
+        return 0, "No images found in directory"
+
+    count = 0
+    for idx, img_path in enumerate(images):
+        img = cv2.imread(img_path)
+        if img is None:
+            continue
+        dets = detect_faces(detector, img, conf_thresh=conf_thresh)
+        if not dets:
+            continue
+        dets.sort(key=lambda d: d.get("confidence", 0.0), reverse=True)
+        emb = get_embedding(dets[0].get("face_obj"))
+        if emb is None:
+            continue
+        base = os.path.splitext(os.path.basename(img_path))[0]
+        out_name = f"{label}_{base}_{idx}.npy"
+        out_path = os.path.join(emb_dir, out_name)
+        save_embedding(out_path, emb)
+        labels[out_name] = label
+        count += 1
+
+    try:
+        with open(labels_out, "w", encoding="utf-8") as f:
+            json.dump(labels, f, indent=2)
+    except Exception as e:
+        return count, str(e)
+    return count, ""
+
+
 def main():
     parser = argparse.ArgumentParser(description="Register known faces by computing embeddings from images")
     parser.add_argument("--images-dir", required=True, help="Directory containing face images (one person per image or folder)")

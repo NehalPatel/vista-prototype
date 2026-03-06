@@ -12,10 +12,38 @@ FRAMES_DIR = os.path.join(VISTA_DIR, "frames")
 DETECTIONS_DIR = os.path.join(VISTA_DIR, "detections")
 RESULTS_DIR = os.path.join(VISTA_DIR, "results")
 
+# Training Data Manager: raw uploads for face and monument training
+TRAINING_DATA_DIR = os.path.join(VISTA_DIR, "training_data")
+TRAINING_FACES_DIR = os.path.join(TRAINING_DATA_DIR, "faces")
+TRAINING_MONUMENTS_DIR = os.path.join(TRAINING_DATA_DIR, "monuments")
+# Kaggle / provided dataset (e.g. Indian monuments) - folder per class
+TRAINING_DATASET_DIR = os.path.join(TRAINING_DATA_DIR, "dataset")
+# Downloaded/unorganized datasets (e.g. Kaggle): run organize --from-datasets to copy into faces/ and monuments/
+DATASETS_DIR = os.path.join(TRAINING_DATA_DIR, "datasets")
+# Inbox: put unorganized images here in subfolders (subfolder name = person or monument name), then run organize script
+INBOX_FACES_DIR = os.path.join(TRAINING_DATA_DIR, "inbox_faces")
+INBOX_MONUMENTS_DIR = os.path.join(TRAINING_DATA_DIR, "inbox_monuments")
+# Trained monument classifier and index
+MONUMENT_MODEL_DIR = os.path.join(VISTA_DIR, "monument_model")
+
 
 def ensure_directories() -> None:
     """Create required directories if missing."""
-    for path in [VISTA_DIR, VIDEOS_DIR, FRAMES_DIR, DETECTIONS_DIR, RESULTS_DIR]:
+    for path in [
+        VISTA_DIR,
+        VIDEOS_DIR,
+        DETECTIONS_DIR,
+        RESULTS_DIR,
+        TRAINING_DATA_DIR,
+        TRAINING_FACES_DIR,
+        TRAINING_MONUMENTS_DIR,
+        INBOX_FACES_DIR,
+        INBOX_MONUMENTS_DIR,
+        MONUMENT_MODEL_DIR,
+    ]:
+        os.makedirs(path, exist_ok=True)
+    # FRAMES_DIR created on demand per video; TRAINING_DATASET_DIR is user-provided
+    for path in [FRAMES_DIR]:
         os.makedirs(path, exist_ok=True)
 
 

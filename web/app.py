@@ -17,11 +17,16 @@ from pipeline.paths import (
     ensure_directories,
     get_video_results_paths,
     ensure_video_results_dirs,
+    TRAINING_FACES_DIR,
+    TRAINING_MONUMENTS_DIR,
+    TRAINING_DATASET_DIR,
+    MONUMENT_MODEL_DIR,
 )
 from pipeline.utils import (
     extract_video_id_from_url,
     sanitize_id,
     validate_video_id,
+    sanitize_dataset_name,
 )
 from pipeline.video import download_video, extract_frames
 from pipeline.detection import (
@@ -34,6 +39,11 @@ from pipeline.detection import (
 )
 from pipeline.render import make_video_from_images
 from pipeline.faces import run_face_detection
+from pipeline.monuments import (
+    build_and_train_monument_model,
+    run_monument_recognition,
+    load_monument_model,
+)
 
 try:
     import yt_dlp  # type: ignore
@@ -48,6 +58,8 @@ RESULTS_BASE = os.path.join(BASE_DIR, 'vista-prototype', 'results')
 FRAMES_DIR = os.path.join(BASE_DIR, 'vista-prototype', 'frames')
 VIDEOS_DIR = os.path.join(BASE_DIR, 'vista-prototype', 'videos')
 
+# Ensure runtime directories (including training_data) exist at startup
+ensure_directories()
 
 
 @app.route('/')
@@ -55,9 +67,224 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/training')
+def training_page():
+    """Training Data Manager page: face and monument dataset upload/train."""
+    return render_template('training.html')
+
+
 @app.route('/results/<path:filename>')
 def serve_results(filename: str):
     return send_from_directory(RESULTS_BASE, filename)
+
+
+# --- Training Data Manager API ---
+
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+
+def _training_upload_dir(dataset_type: str, name: str):
+    """Return the directory path for a given dataset type and sanitized name."""
+    safe_name = sanitize_dataset_name(name)
+    if not safe_name:
+        return None
+    if dataset_type == "face":
+        return os.path.join(TRAINING_FACES_DIR, safe_name)
+    if dataset_type == "monument":
+        return os.path.join(TRAINING_MONUMENTS_DIR, safe_name)
+    return None
+
+
+@app.route("/api/training/upload", methods=["POST"])
+def api_training_upload():
+    """Upload images for a face or monument dataset. Form: name, type (face|monument), files (multiple)."""
+    ensure_directories()
+    name = (request.form.get("name") or "").strip()
+    dataset_type = (request.form.get("type") or "face").strip().lower()
+    if dataset_type not in ("face", "monument"):
+        return jsonify({"error": "type must be 'face' or 'monument'"}), 400
+    target_dir = _training_upload_dir(dataset_type, name)
+    if not target_dir:
+        return jsonify({"error": "Invalid or empty name"}), 400
+
+    os.makedirs(target_dir, exist_ok=True)
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "No files provided"}), 400
+
+    saved = 0
+    for f in files:
+        if not f or not f.filename:
+            continue
+        ext = os.path.splitext(f.filename)[1].lower()
+        if ext not in ALLOWED_IMAGE_EXTENSIONS:
+            continue
+        safe_name = sanitize_id(os.path.basename(f.filename)) or "image"
+        base, _ = os.path.splitext(safe_name)
+        path = os.path.join(target_dir, f"{base}{ext}")
+        idx = 0
+        while os.path.exists(path):
+            idx += 1
+            path = os.path.join(target_dir, f"{base}_{idx}{ext}")
+        try:
+            f.save(path)
+            saved += 1
+        except Exception:
+            pass
+
+    return jsonify({"saved": saved, "path": target_dir})
+
+
+@app.route("/api/training/train-faces", methods=["POST"])
+def api_training_train_faces():
+    """Train/register face dataset: run embeddings from training_data/faces and update known_faces."""
+    payload = request.get_json(force=True) or {}
+    celebrity_name = (payload.get("celebrity_name") or "").strip()
+    train_all = bool(payload.get("all", False))
+
+    device = "cpu"
+    try:
+        import torch  # type: ignore
+        if torch.cuda.is_available():
+            device = "cuda"
+    except Exception:
+        pass
+    face_model = (payload.get("face_model") or "buffalo_l").strip().lower()
+    if face_model not in ("buffalo_l", "buffalo_s", "buffalo_sc"):
+        face_model = "buffalo_l"
+
+    if train_all:
+        if not os.path.isdir(TRAINING_FACES_DIR):
+            return jsonify({"error": "No face datasets found", "registered": 0}), 400
+        total_registered = 0
+        errors = []
+        for subdir in sorted(os.listdir(TRAINING_FACES_DIR)):
+            path = os.path.join(TRAINING_FACES_DIR, subdir)
+            if not os.path.isdir(path):
+                continue
+            try:
+                from face_pipeline.register_known import register_faces_from_folder
+                count, err = register_faces_from_folder(
+                    path, subdir, device=device, model_name=face_model, conf_thresh=0.8
+                )
+                if err:
+                    errors.append(f"{subdir}: {err}")
+                else:
+                    total_registered += count
+            except Exception as e:
+                errors.append(f"{subdir}: {e}")
+        return jsonify({
+            "registered": total_registered,
+            "errors": errors,
+        })
+    else:
+        safe_name = sanitize_dataset_name(celebrity_name)
+        if not safe_name:
+            return jsonify({"error": "Invalid or empty celebrity name"}), 400
+        images_dir = os.path.join(TRAINING_FACES_DIR, safe_name)
+        if not os.path.isdir(images_dir):
+            return jsonify({"error": f"No dataset found for '{celebrity_name}'"}), 404
+        try:
+            from face_pipeline.register_known import register_faces_from_folder
+            count, err = register_faces_from_folder(
+                images_dir, safe_name, device=device, model_name=face_model, conf_thresh=0.8
+            )
+            if err:
+                return jsonify({"error": err, "registered": count}), 500
+            return jsonify({"registered": count})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/training/build-monument-model", methods=["POST"])
+def api_training_build_monument_model():
+    """Build and train the monument classifier from training_data/dataset and training_data/monuments."""
+    ensure_directories()
+    device = "cpu"
+    try:
+        import torch  # type: ignore
+        if torch.cuda.is_available():
+            device = "cuda"
+    except Exception:
+        pass
+    try:
+        result = build_and_train_monument_model(
+            dataset_dir=TRAINING_DATASET_DIR,
+            monuments_dir=TRAINING_MONUMENTS_DIR,
+            model_dir=MONUMENT_MODEL_DIR,
+            device=device,
+        )
+        if result.get("trained"):
+            return jsonify(result)
+        return jsonify({"error": result.get("error", "Training failed")}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/training/datasets", methods=["GET"])
+def api_training_datasets():
+    """List face and monument datasets with image counts."""
+    ensure_directories()
+    faces = []
+    for name in sorted(os.listdir(TRAINING_FACES_DIR)) if os.path.isdir(TRAINING_FACES_DIR) else []:
+        path = os.path.join(TRAINING_FACES_DIR, name)
+        if not os.path.isdir(path):
+            continue
+        count = sum(1 for f in os.listdir(path) if os.path.splitext(f)[1].lower() in ALLOWED_IMAGE_EXTENSIONS)
+        faces.append({"name": name, "count": count})
+    monuments = []
+    for name in sorted(os.listdir(TRAINING_MONUMENTS_DIR)) if os.path.isdir(TRAINING_MONUMENTS_DIR) else []:
+        path = os.path.join(TRAINING_MONUMENTS_DIR, name)
+        if not os.path.isdir(path):
+            continue
+        count = sum(1 for f in os.listdir(path) if os.path.splitext(f)[1].lower() in ALLOWED_IMAGE_EXTENSIONS)
+        monuments.append({"name": name, "count": count})
+    return jsonify({"faces": faces, "monuments": monuments})
+
+
+@app.route("/api/training/datasets/<dataset_type>/<name>", methods=["GET"])
+def api_training_dataset_images(dataset_type: str, name: str):
+    """List image filenames in a dataset. dataset_type: face | monument."""
+    if dataset_type not in ("face", "monument"):
+        return jsonify({"error": "type must be face or monument"}), 400
+    safe_name = sanitize_dataset_name(name)
+    if not safe_name:
+        return jsonify({"error": "Invalid name"}), 400
+    base = TRAINING_FACES_DIR if dataset_type == "face" else TRAINING_MONUMENTS_DIR
+    path = os.path.join(base, safe_name)
+    if not os.path.isdir(path):
+        return jsonify({"error": "Dataset not found", "images": []}), 404
+    images = [
+        f for f in os.listdir(path)
+        if os.path.isfile(os.path.join(path, f)) and os.path.splitext(f)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+    ]
+    return jsonify({"name": safe_name, "type": dataset_type, "images": sorted(images)})
+
+
+@app.route("/api/training/image", methods=["DELETE"])
+def api_training_delete_image():
+    """Delete one image from a dataset. JSON body: type (face|monument), name, filename."""
+    payload = request.get_json(force=True) or {}
+    dataset_type = (payload.get("type") or "").strip().lower()
+    name = (payload.get("name") or "").strip()
+    filename = (payload.get("filename") or "").strip()
+    if dataset_type not in ("face", "monument"):
+        return jsonify({"error": "type must be face or monument"}), 400
+    safe_name = sanitize_dataset_name(name)
+    if not safe_name or not filename:
+        return jsonify({"error": "name and filename required"}), 400
+    # Prevent path traversal
+    if ".." in filename or os.path.sep in filename:
+        return jsonify({"error": "Invalid filename"}), 400
+    base = TRAINING_FACES_DIR if dataset_type == "face" else TRAINING_MONUMENTS_DIR
+    path = os.path.join(base, safe_name, filename)
+    if not os.path.isfile(path):
+        return jsonify({"error": "File not found"}), 404
+    try:
+        os.remove(path)
+        return jsonify({"deleted": filename})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 def get_system_info():
@@ -332,6 +559,37 @@ def api_process():
             run_stats["face_detection_sec"] = round(time.perf_counter() - t_face, 2)
             total_face_detections = sum(len(v) for v in faces_by_frame.values())
 
+        # Monument recognition (if model was built from training_data/dataset or monuments)
+        monuments_by_frame = {}
+        if load_monument_model(MONUMENT_MODEL_DIR) is not None:
+            try:
+                t_mon = time.perf_counter()
+                monument_conf = float(payload.get("monument_conf_threshold", 0.5))
+                monuments_by_frame = run_monument_recognition(
+                    paths["processed_frames"],
+                    MONUMENT_MODEL_DIR,
+                    device=device,
+                    confidence_threshold=monument_conf,
+                )
+                run_stats["monument_recognition_sec"] = round(time.perf_counter() - t_mon, 2)
+                # Draw monument label on each frame
+                import cv2
+                for fname, info in monuments_by_frame.items():
+                    label = info.get("label")
+                    conf = info.get("confidence", 0)
+                    if label and label != "Unknown" and conf >= monument_conf:
+                        path_img = os.path.join(paths["processed_frames"], fname)
+                        img = cv2.imread(path_img)
+                        if img is not None:
+                            cv2.putText(
+                                img, f"Monument: {label} ({conf:.2f})",
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2,
+                            )
+                            cv2.imwrite(path_img, img)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Monument recognition failed: %s", e)
+
         write_metadata(
             metadata_path=paths['metadata_txt'],
             video_id=video_id,
@@ -354,6 +612,7 @@ def api_process():
             + run_stats.get("extract_frames_sec", 0)
             + run_stats.get("detection_sec", 0)
             + run_stats.get("face_detection_sec", 0)
+            + run_stats.get("monument_recognition_sec", 0)
             + run_stats.get("render_sec", 0),
             2,
         )
@@ -367,6 +626,7 @@ def api_process():
             face_model=face_model_name,
             run_stats=run_stats,
             faces_by_frame=faces_by_frame,
+            monuments_by_frame=monuments_by_frame,
         )
 
         return jsonify({

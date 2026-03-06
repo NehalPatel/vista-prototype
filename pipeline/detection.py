@@ -176,9 +176,11 @@ def save_detection_results(
     face_model: str = "buffalo_l",
     run_stats: Optional[Dict[str, Any]] = None,
     faces_by_frame: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    monuments_by_frame: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> None:
-    """Write a single JSON file containing all detections (and optional faces) for the video."""
+    """Write a single JSON file containing all detections (and optional faces, monuments) for the video."""
     fbf = faces_by_frame or {}
+    mbf = monuments_by_frame or {}
     frames_payload = []
     for frame, dets in sorted(results_by_frame.items()):
         entry: Dict[str, Any] = {"frame": frame, "detections": dets}
@@ -186,6 +188,10 @@ def save_detection_results(
             entry["faces"] = fbf[frame]
         else:
             entry["faces"] = []
+        if frame in mbf:
+            entry["monument"] = mbf[frame]
+        else:
+            entry["monument"] = {}
         frames_payload.append(entry)
     payload: Dict[str, Any] = {
         "video_id": video_id,

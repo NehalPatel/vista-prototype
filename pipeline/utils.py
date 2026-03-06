@@ -78,3 +78,16 @@ def validate_video_id(video_id: str) -> bool:
     if not video_id:
         return False
     return re.fullmatch(r"[0-9A-Za-z_-]{3,128}", video_id) is not None
+
+
+def sanitize_dataset_name(name: str) -> str:
+    """Sanitize a string for use as a training dataset folder name (e.g. celebrity or monument name).
+
+    Replaces spaces with underscores, keeps alphanumerics, underscore, hyphen; max 128 chars.
+    """
+    if not name or not name.strip():
+        return ""
+    cleaned = re.sub(r"[^\w\s-]", "", name.strip())
+    cleaned = cleaned.replace(" ", "_")
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned[:128] if cleaned else ""
