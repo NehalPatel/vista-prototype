@@ -7,6 +7,7 @@ __pycache__/
 # Virtual environment
 venv/
 env/
+.venv/
 
 # OS/Editor files
 .DS_Store
@@ -31,3 +32,4 @@ vista-prototype/videos/
 vista-prototype/faces/
 vista-prototype/face_results/
 vista-prototype/known_faces/embeddings/
+vista-prototype/training_data/
