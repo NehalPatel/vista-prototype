@@ -47,20 +47,81 @@ At runtime, data is written under a nested `vista-prototype/` directory inside t
 / (repo root)
 ├── pipeline/                 # modular pipeline (download, frames, detection, render)
 ├── web/                      # Flask web UI (HTML/CSS/JS + API)
-├── implementation.py         # CLI entrypoint for the pipeline
+├── scripts/                  # organize_training_data.py, build_models.py
+├── implementation.py        # CLI entrypoint for the pipeline
 ├── README.md                 # this file
-└── vista-prototype/          # runtime data (auto-created)
+└── vista-prototype/         # runtime data (auto-created)
     ├── videos/               # downloaded YouTube MP4s
     ├── frames/               # extracted raw frames
-    └── results/
-        └── <video_id>/
-            ├── processed_frames/       # annotated frames (YOLO)
-            ├── detection_results.json  # all detections for the video
-            ├── metadata.txt            # summary + device info
-            └── detections_video.mp4    # rendered video (may fall back to .avi)
+    ├── results/
+    │   └── <video_id>/
+    │       ├── processed_frames/       # annotated frames (YOLO + faces)
+    │       ├── detection_results.json  # all detections for the video
+    │       ├── metadata.txt            # summary + device info
+    │       └── detections_video.mp4   # rendered video (may fall back to .avi)
+    ├── training_data/        # datasets for face & monument training (see below)
+    ├── known_faces/          # face recognition model (embeddings; built by build_models.py)
+    └── monument_model/       # monument classifier (built by build_models.py)
 ```
 
-Notes
+## Datasets and training
+
+To **recognize faces** (e.g. celebrities) and **classify monuments** in videos, add training images and build the models.
+
+### Where to put datasets
+
+All paths below are under `vista-prototype/` (created at first run).
+
+| Purpose | Folder | Layout |
+|--------|--------|--------|
+| **Face recognition** (final) | `vista-prototype/training_data/faces/<name>/` | One folder per person; put images of that person inside. |
+| **Monument classification** (final) | `vista-prototype/training_data/monuments/<name>/` | One folder per monument; put images inside. |
+| **Unorganized faces** | `vista-prototype/training_data/inbox_faces/<name>/` | One subfolder per person; run organize script to copy into `faces/`. |
+| **Unorganized monuments** | `vista-prototype/training_data/inbox_monuments/<name>/` | One subfolder per monument; run organize script to copy into `monuments/`. |
+| **Bulk datasets** (e.g. Kaggle) | `vista-prototype/training_data/datasets/faces/` and `.../datasets/monuments/` | Place downloaded datasets here; use `--from-datasets` when running the organize script. |
+
+See `Dataset.md` for example Kaggle datasets (e.g. Indian cricketers, Indian monuments).
+
+### Commands to run (from repo root)
+
+**1. Organize images** (copy from inbox or from `datasets/` into `faces/` and `monuments/`):
+
+```bash
+# Preview what will be copied (dry run)
+python scripts/organize_training_data.py --from-datasets --dry-run
+
+# Organize from training_data/datasets/ into faces/ and monuments/
+python scripts/organize_training_data.py --from-datasets
+
+# Only faces
+python scripts/organize_training_data.py --from-datasets --faces-only
+
+# Only monuments
+python scripts/organize_training_data.py --from-datasets --monuments-only
+
+# Organize from inbox_faces/ and inbox_monuments/ (no --from-datasets)
+python scripts/organize_training_data.py
+```
+
+**2. Build models** (face recognition + monument classifier):
+
+```bash
+# Build both face and monument models
+python scripts/build_models.py
+
+# Only face recognition (from training_data/faces/ → vista-prototype/known_faces/)
+python scripts/build_models.py --faces-only
+
+# Only monument model (from training_data/monuments/ and training_data/dataset/ → vista-prototype/monument_model/)
+python scripts/build_models.py --monuments-only
+
+# Use GPU if available
+python scripts/build_models.py --device cuda
+```
+
+After building, process a video in the web UI or CLI; recognized faces and monuments will appear in the results. You can also upload images and train from the **Training** page in the web UI (`/training`).
+
+### Notes
 - `video_id` is derived from the YouTube URL (or sanitized filename). Existing per-video results will not be overwritten; delete the folder to re-run.
 - The pipeline defaults to `yolov8n.pt` for speed. Ultralytics will download the model automatically.
 - GPU is optional. If `torch` with CUDA is available, YOLO can run on GPU; otherwise CPU is used.
