@@ -47,6 +47,12 @@ from pipeline.monuments import (
     run_monument_recognition,
     load_monument_model,
 )
+from pipeline.mongodb_store import (
+    index_detection_results_to_mongodb,
+    get_db,
+    VIDEOS_COLLECTION,
+    FRAMES_COLLECTION,
+)
 
 try:
     import yt_dlp  # type: ignore
@@ -322,10 +328,31 @@ def get_system_info():
             gpu_name = torch.cuda.get_device_name(0) or "CUDA GPU"
     except Exception:
         pass
+    mongo_status = "disabled"
+    mongo_db_name: str | None = None
+    mongo_videos: int | None = None
+    mongo_frames: int | None = None
+    try:
+        db = get_db()
+        if db is not None:
+            mongo_status = "connected"
+            mongo_db_name = str(db.name)
+            try:
+                mongo_videos = db[VIDEOS_COLLECTION].estimated_document_count()
+                mongo_frames = db[FRAMES_COLLECTION].estimated_document_count()
+            except Exception:
+                # Counting is best-effort; ignore failures here
+                pass
+    except Exception:
+        mongo_status = "error"
     return {
         "python_version": python_version,
         "cpu": cpu_name,
         "gpu": gpu_name,
+        "mongo_status": mongo_status,
+        "mongo_db_name": mongo_db_name,
+        "mongo_videos": mongo_videos,
+        "mongo_frames": mongo_frames,
     }
 
 
@@ -652,6 +679,31 @@ def api_process():
             faces_by_frame=faces_by_frame,
             monuments_by_frame=monuments_by_frame,
         )
+
+        # Persist to MongoDB for search engine (optional; set MONGODB_URI)
+        try:
+            mongo_ok = index_detection_results_to_mongodb(
+                video_id=video_id,
+                source_url=url,
+                meta=meta,
+                run_stats=run_stats,
+                results_by_frame=results_by_frame,
+                faces_by_frame=faces_by_frame,
+                monuments_by_frame=monuments_by_frame,
+                by_class=by_class,
+                confidence_threshold=conf_threshold,
+                object_model=object_model,
+                face_model=face_model_name,
+                fps=float(fps),
+            )
+            # Simple console message so it's obvious when indexing succeeds
+            if mongo_ok:
+                print(f"[mongo] Indexed video {video_id!r} into MongoDB.")
+            else:
+                print(f"[mongo] MongoDB indexing skipped or failed for video {video_id!r}.")
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("MongoDB index skipped: %s", e)
 
         return jsonify({
             "status": "completed",

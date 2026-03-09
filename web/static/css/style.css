@@ -601,6 +601,18 @@ input:focus {
   user-select: none;
 }
 
+.tags-list li.face-badge-success {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #ffffff;
+}
+
+.tags-list li.face-badge-maybe {
+  background: #facc15;
+  border-color: #facc15;
+  color: #1f2933;
+}
+
 .tags-list li:hover {
   background: var(--primary);
   color: white;

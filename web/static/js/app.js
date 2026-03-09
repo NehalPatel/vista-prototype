@@ -352,7 +352,8 @@ async function renderResultsFromVideoId(videoId) {
       if (faceCount > 0 && faceEntries.length > 0) {
         for (const [cls, count] of faceEntries) {
           const li = document.createElement('li');
-          li.className = 'clickable';
+          const isMaybe = cls.startsWith('face:Maybe:');
+          li.className = 'clickable ' + (isMaybe ? 'face-badge-maybe' : 'face-badge-success');
           li.setAttribute('role','button');
           li.setAttribute('tabindex','0');
           li.dataset.cls = cls;
@@ -571,6 +572,22 @@ async function loadSystemInfo() {
       ['CPU', data.cpu || '—'],
       ['Graphics', data.gpu || '—'],
     ];
+    const mongoParts = [];
+    if (data.mongo_status) {
+      mongoParts.push(data.mongo_status === 'connected' ? 'Connected' : prettifyLabel(data.mongo_status));
+    }
+    if (data.mongo_db_name) {
+      mongoParts.push('DB: ' + data.mongo_db_name);
+    }
+    if (typeof data.mongo_videos === 'number') {
+      mongoParts.push('videos ' + data.mongo_videos);
+    }
+    if (typeof data.mongo_frames === 'number') {
+      mongoParts.push('frames ' + data.mongo_frames);
+    }
+    if (data.mongo_status || data.mongo_db_name || typeof data.mongo_videos === 'number' || typeof data.mongo_frames === 'number') {
+      entries.push(['MongoDB', mongoParts.length ? mongoParts.join(' \u2022 ') : (data.mongo_status || '—')]);
+    }
     for (const [label, value] of entries) {
       const li = document.createElement('li');
       li.className = 'system-info-item';

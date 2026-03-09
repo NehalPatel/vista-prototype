@@ -1,3 +1,6 @@
+# Environment (secrets); use .env.example as template
+.env
+
 # Python bytecode and cache
 __pycache__/
 *.py[cod]

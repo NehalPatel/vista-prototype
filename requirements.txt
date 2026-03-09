@@ -1,6 +1,10 @@
 # Web app
 flask>=2.0
 
+# MongoDB – optional; set MONGODB_URI in .env to persist detection results for search engine
+pymongo>=4.0
+python-dotenv>=1.0
+
 # Video / pipeline (YOLO, download, render) – YOLO uses PyTorch for inference
 torch
 torchvision

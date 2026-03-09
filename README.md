@@ -126,6 +126,20 @@ After building, process a video in the web UI or CLI; recognized faces and monum
 - The pipeline defaults to `yolov8n.pt` for speed. Ultralytics will download the model automatically.
 - GPU is optional. If `torch` with CUDA is available, YOLO can run on GPU; otherwise CPU is used.
 
+## MongoDB (optional)
+
+To persist detection results for a **separate search engine project** (e.g. query "Nehal in red car" and rank videos by face + object), set:
+
+- **`MONGODB_URI`** (or `MONGO_URI`): connection string (e.g. `mongodb://localhost:27017` or Atlas SRV).
+- **`VISTA_DB_NAME`** (optional): database name; default `vista_search`.
+
+After each successful video run, the app writes to two collections:
+
+- **`videos`**: one document per video (video_id, source_url, title, duration_sec, thumbnail, face_labels, object_labels, monument_labels, summary, run_stats).
+- **`frames`**: one document per frame (video_id, frame_filename, frame_index, time_sec, objects, faces, monument).
+
+Indexes are created for efficient search on `faces.label`, `objects.class`, `objects.color`, `objects.label`. If `MONGODB_URI` is not set, indexing is skipped and the app behaves as before (JSON and files only). See `MONGODB_SEARCH_ENGINE_PLAN.md` and `pipeline/mongodb_store.py` for the full schema.
+
 ## Technologies Used
 
 - Object Detection: YOLOv8 (Ultralytics)
@@ -133,7 +147,7 @@ After building, process a video in the web UI or CLI; recognized faces and monum
 - Frame Extraction: OpenCV
 - Video Download: PyTube (fallback: `yt-dlp`)
 - Web UI: Flask
-- Optional: `tqdm` for progress bars, `torch` for GPU
+- Optional: `pymongo` for MongoDB, `tqdm` for progress bars, `torch` for GPU
 
 ## Prototype: Development Process
 

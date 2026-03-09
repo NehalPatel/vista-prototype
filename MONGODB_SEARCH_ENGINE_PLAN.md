@@ -1,7 +1,8 @@
 # MongoDB-Backed Search Engine for VISTA
 
-**Build plan — to implement later.**  
-Persist object and face detection results in MongoDB and expose a search API so queries like "Nehal in red car" return matching video links and frame references.
+**Storage (this repo):** Implemented. Set `MONGODB_URI` to persist detection results after each run. See `pipeline/mongodb_store.py` and the "MongoDB (optional)" section in README.
+
+**Search engine (separate project):** To implement later. Read from the same MongoDB; implement query parsing and ranking (e.g. "Nehal in red car" → videos with both first, then by person, then by object).
 
 ---
 
