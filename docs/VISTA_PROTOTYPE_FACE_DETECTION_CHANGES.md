@@ -8,7 +8,7 @@ This document describes changes to apply in **vista-prototype** so that Buffalo 
 
 | Area | vista-face-recognition (working) | vista-prototype (no faces) |
 |------|----------------------------------|----------------------------|
-| **ONNX providers** | Uses `get_onnx_providers()` — checks **actual** ONNX Runtime availability (CUDA vs CPU) | Uses PyTorch `device` to choose providers; if ONNX doesn’t have CUDA, this can fail or behave badly |
+| **ONNX providers** | Uses `get_onnx_providers()` — checks **actual** ONNX Runtime availability (CUDA vs CPU) | Uses PyTorch `device` to choose providers; if ONNX doesn't have CUDA, this can fail or behave badly |
 | **ctx_id** | Always `ctx_id=0` with providers that match (CUDA or CPU) | `ctx_id=0` for cuda, `-1` for cpu, but `device` comes from PyTorch, not from ONNX — can mismatch |
 | **det_size** | `(640, 640)` | `(896, 896)` in pipeline/faces.py — can cause issues on some setups |
 | **Confidence** | `0.5` (config) | `0.3` in web app — already more permissive; not likely the cause |
@@ -20,7 +20,7 @@ This document describes changes to apply in **vista-prototype** so that Buffalo 
 
 ### 1. `face_pipeline/detection.py`
 
-**Goal:** Use ONNX Runtime’s actual available providers (like vista-face-recognition) and set `ctx_id` from that, not from PyTorch.
+**Goal:** Use ONNX Runtime's actual available providers (like vista-face-recognition) and set `ctx_id` from that, not from PyTorch.
 
 **Changes:**
 
@@ -68,7 +68,7 @@ This document describes changes to apply in **vista-prototype** so that Buffalo 
      to  
      `detector = load_detector(device=device, model_name=face_model, det_size=(640, 640))`
 
-2. **Optional:** If you still get no faces, you can try lowering the confidence for debugging (e.g. `face_conf_threshold=0.2`) or add a short log when the first frame is processed (e.g. “Running face detection on frame X, threshold=…”).
+2. **Optional:** If you still get no faces, you can try lowering the confidence for debugging (e.g. `face_conf_threshold=0.2`) or add a short log when the first frame is processed (e.g. "Running face detection on frame X, threshold=…").
 
 ---
 
@@ -90,7 +90,7 @@ This document describes changes to apply in **vista-prototype** so that Buffalo 
 
 - Install **onnxruntime-gpu** if you have an NVIDIA GPU and CUDA installed:  
   `pip install onnxruntime-gpu`
-- If you don’t have a GPU or CUDA, use:  
+- If you don't have a GPU or CUDA, use:  
   `pip install onnxruntime`  
   With the new `_get_onnx_providers()` logic, the code will use CPU without requesting CUDA.
 
