@@ -63,6 +63,16 @@ def run_face_detection(
             known_faces = load_known_embeddings(known_dir)
             if known_faces:
                 print("[trace] face recognition enabled:", len(known_faces), "known embeddings")
+            else:
+                logger.info(
+                    "Face recognition: no known face embeddings in %s. All faces will show as 'Unknown'. "
+                    "Add a face dataset in Training Data Manager and click 'Train faces' to recognize people.",
+                    known_dir,
+                )
+        else:
+            logger.info(
+                "Face recognition: known_faces/embeddings not found. Add a face dataset and click 'Train faces' to recognize people."
+            )
     except Exception as e:
         logger.debug("Face recognition skipped (no known_faces or import error): %s", e)
 

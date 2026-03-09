@@ -284,7 +284,17 @@ async function renderResultsFromVideoId(videoId) {
       if (faces.length) {
         byClass['face'] = (byClass['face'] || 0) + faces.length;
         if (!objectsIndex['face']) objectsIndex['face'] = {};
-        objectsIndex['face'][fname] = faces.map((fa) => ({ bbox: fa.bbox, conf: fa.confidence }));
+        if (!objectsIndex['face'][fname]) objectsIndex['face'][fname] = [];
+        for (const fa of faces) {
+          const label = String(fa.label != null ? fa.label : 'Unknown');
+          const key = 'face:' + label;
+          byClass[key] = (byClass[key] || 0) + 1;
+          if (!objectsIndex[key]) objectsIndex[key] = {};
+          if (!objectsIndex[key][fname]) objectsIndex[key][fname] = [];
+          const item = { bbox: fa.bbox, conf: fa.confidence, label: label };
+          objectsIndex[key][fname].push(item);
+          objectsIndex['face'][fname].push(item);
+        }
       }
       if (monument && monument.label && monument.label !== 'Unknown') {
         const mConf = (typeof monument.confidence === 'number') ? monument.confidence : null;
@@ -316,7 +326,7 @@ async function renderResultsFromVideoId(videoId) {
       summaryListEl.appendChild(li);
     }
     const entries = Object.entries(objectsIndex)
-      .filter(([cls]) => cls !== 'face')
+      .filter(([cls]) => cls !== 'face' && !cls.startsWith('face:'))
       .map(([cls, framesMap]) => [cls, Object.keys(framesMap).length]);
     entries.sort((a,b)=>b[1]-a[1]);
     objectsListEl.innerHTML = '';
@@ -331,11 +341,27 @@ async function renderResultsFromVideoId(videoId) {
       li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openModalForClass(cls); } });
       objectsListEl.appendChild(li);
     }
-    // Detected Faces widget
+    // Detected Faces widget: one entry per recognized label in the list (no duplicate in header)
+    const faceEntries = Object.entries(objectsIndex)
+      .filter(([cls]) => cls.startsWith('face:'))
+      .map(([cls, framesMap]) => [cls, Object.keys(framesMap).reduce((n, fn) => n + (framesMap[fn]?.length || 0), 0)]);
+    faceEntries.sort((a, b) => b[1] - a[1]);
+    const faceCount = totalFaceDetections || 0;
     if (facesListEl) {
       facesListEl.innerHTML = '';
-      const faceCount = totalFaceDetections || 0;
-      if (faceCount > 0 && objectsIndex['face']) {
+      if (faceCount > 0 && faceEntries.length > 0) {
+        for (const [cls, count] of faceEntries) {
+          const li = document.createElement('li');
+          li.className = 'clickable';
+          li.setAttribute('role','button');
+          li.setAttribute('tabindex','0');
+          li.dataset.cls = cls;
+          li.textContent = `${displayLabelForClass(cls)} (${count})`;
+          li.addEventListener('click', () => openModalForClass(cls));
+          li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openModalForClass(cls); } });
+          facesListEl.appendChild(li);
+        }
+      } else if (faceCount > 0) {
         const li = document.createElement('li');
         li.className = 'clickable';
         li.setAttribute('role','button');
@@ -377,7 +403,11 @@ function formatTimestampFromFrame(name) {
 
 function displayLabelForClass(cls) {
   if (typeof cls !== 'string') return cls;
-  if (cls.toLowerCase() === 'face') return 'Face';
+  if (cls === 'face') return 'Face';
+  if (cls.startsWith('face:')) {
+    const raw = cls.slice('face:'.length);
+    return raw === 'Unknown' ? 'Unknown (unrecognized)' : raw;
+  }
   if (cls.startsWith('monument:')) {
     const raw = cls.slice('monument:'.length);
     return 'Monument: ' + prettifyLabel(raw);

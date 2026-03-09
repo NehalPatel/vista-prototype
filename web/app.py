@@ -63,6 +63,15 @@ RESULTS_BASE = RESULTS_DIR
 
 # Ensure runtime directories (including training_data) exist at startup
 ensure_directories()
+# Ensure known_faces dir exists so "Train faces" can write embeddings
+try:
+    from face_pipeline.paths import KNOWN_FACES_DIR
+    import os as _os
+    _kf = str(KNOWN_FACES_DIR)
+    _os.makedirs(_kf, exist_ok=True)
+    _os.makedirs(_os.path.join(_kf, "embeddings"), exist_ok=True)
+except Exception:
+    pass
 
 
 @app.route('/')
