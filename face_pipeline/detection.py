@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import List, Dict, Any, Tuple, Union
 import json
 import os
+import sys
 import time
 import warnings
 
@@ -60,14 +62,28 @@ def _get_onnx_providers(device: str = "cuda") -> List[str]:
 FACE_MODEL_CHOICES = ("buffalo_l", "buffalo_s", "buffalo_sc")
 
 
+@contextmanager
+def _suppress_stdout_stderr():
+    """Temporarily redirect stdout/stderr to devnull (e.g. to hide InsightFace/ONNX verbose prints)."""
+    save_stdout, save_stderr = sys.stdout, sys.stderr
+    try:
+        with open(os.devnull, "w", encoding="utf-8") as devnull:
+            sys.stdout = sys.stderr = devnull
+            yield
+    finally:
+        sys.stdout, sys.stderr = save_stdout, save_stderr
+
+
 def load_detector(
     device: str = "cuda",
     det_size: Tuple[int, int] = (640, 640),
     model_name: str = "buffalo_l",
+    silent: bool = False,
 ) -> Any:
     """Initialize insightface FaceAnalysis detector+recognition.
 
     model_name: one of buffalo_l, buffalo_s, buffalo_sc.
+    silent: if True, suppress InsightFace/ONNX verbose output (Applied providers, find model, etc.).
     Returns an app object with .get(image) -> list of faces (bbox, landmarks, embeddings).
     """
     # Preload PyTorch CUDA DLLs when using GPU so onnxruntime-gpu (CUDA 11.8 build) can find them
@@ -97,27 +113,34 @@ def load_detector(
         app.prepare(ctx_id=ctx_id, det_size=det_size)
         return app
 
-    try:
-        return _create_app()
-    except Exception as e:  # e.g. cublasLt64_12.dll missing when CUDA provider loads
-        err_msg = str(e).lower()
-        if "cuda" in err_msg and (
-            "cublaslt" in err_msg or "cublas_lt" in err_msg
-            or "onnxruntime_providers_cuda" in err_msg
-            or "error 126" in err_msg
-            or "could not be found" in err_msg
-            or "specified module" in err_msg
-        ):
-            warnings.warn(
-                "Face model: CUDA provider failed to load (e.g. cublasLt64_12.dll missing). Using CPU. "
-                "To use GPU: install onnxruntime-gpu for CUDA 11.8 (see docs/GPU.md Option A) or install CUDA 12 Toolkit (Option B).",
-                UserWarning,
-                stacklevel=2,
-            )
-            providers = ["CPUExecutionProvider"]
-            ctx_id = -1
+    def _run() -> Any:
+        nonlocal providers, ctx_id
+        try:
             return _create_app()
-        raise
+        except Exception as e:  # e.g. cublasLt64_12.dll missing when CUDA provider loads
+            err_msg = str(e).lower()
+            if "cuda" in err_msg and (
+                "cublaslt" in err_msg or "cublas_lt" in err_msg
+                or "onnxruntime_providers_cuda" in err_msg
+                or "error 126" in err_msg
+                or "could not be found" in err_msg
+                or "specified module" in err_msg
+            ):
+                warnings.warn(
+                    "Face model: CUDA provider failed to load (e.g. cublasLt64_12.dll missing). Using CPU. "
+                    "To use GPU: install onnxruntime-gpu for CUDA 11.8 (see docs/GPU.md Option A) or install CUDA 12 Toolkit (Option B).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                providers = ["CPUExecutionProvider"]
+                ctx_id = -1
+                return _create_app()
+            raise
+
+    if silent:
+        with _suppress_stdout_stderr():
+            return _run()
+    return _run()
 
 
 def _get_face_attr(face: Any, key: str, default: Any = None) -> Any:

@@ -77,7 +77,7 @@ def build_face_model(device: str = "cpu", face_model: str = "buffalo_l") -> tupl
         path = os.path.join(TRAINING_FACES_DIR, name)
         print(f"  [{idx}/{n_total}] {name}...", flush=True)
         count, err = register_faces_from_folder(
-            path, name, device=device, model_name=face_model, conf_thresh=0.8
+            path, name, device=device, model_name=face_model, conf_thresh=0.8, silent=True
         )
         if err:
             errors.append(f"{name}: {err}")
