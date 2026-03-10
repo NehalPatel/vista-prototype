@@ -10,8 +10,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import warnings
 from glob import glob
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -100,13 +101,21 @@ def build_and_train_monument_model(
     monuments_dir: str,
     model_dir: str,
     device: Optional[str] = None,
+    progress_callback: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Build feature index from images, train a classifier, save to model_dir. Returns summary dict."""
     import numpy as np
 
+    def _progress(msg: str) -> None:
+        if progress_callback:
+            progress_callback(msg)
+        else:
+            logger.info(msg)
+
     device = device or _get_device()
     os.makedirs(model_dir, exist_ok=True)
 
+    _progress("Collecting images...")
     pairs = collect_monument_images(dataset_dir, monuments_dir)
     if not pairs:
         return {"error": "No images found in dataset or monuments directories", "trained": False}
@@ -118,10 +127,13 @@ def build_and_train_monument_model(
     n_classes = len(class_names)
     label2idx = {c: i for i, c in enumerate(class_names)}
 
-    # Extract features in chunks to avoid OOM
+    _progress(f"Loaded {len(paths)} images, {n_classes} classes. Extracting features...")
     batch_size = 32
     all_features: List[Optional[Any]] = []
+    n_batches = (len(paths) + batch_size - 1) // batch_size
     for i in range(0, len(paths), batch_size):
+        batch_num = i // batch_size + 1
+        _progress(f"  Features batch {batch_num}/{n_batches} ({min(i + batch_size, len(paths))}/{len(paths)} images)")
         batch = paths[i : i + batch_size]
         all_features.extend(_extract_features_batch(batch, device))
 
@@ -137,7 +149,7 @@ def build_and_train_monument_model(
     X = np.array(X_list, dtype=np.float32)
     y = np.array(y_list, dtype=np.int64)
 
-    # Train classifier: use sklearn LogisticRegression or a simple linear layer
+    _progress("Training classifier...")
     try:
         from sklearn.linear_model import LogisticRegression
         from sklearn.preprocessing import StandardScaler
@@ -146,8 +158,10 @@ def build_and_train_monument_model(
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-    clf = LogisticRegression(max_iter=1000, multi_class="multinomial", random_state=42)
-    clf.fit(X_scaled, y)
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=FutureWarning, message=".*multi_class.*")
+        clf = LogisticRegression(max_iter=1000, random_state=42)
+        clf.fit(X_scaled, y)
 
     # Save: class names, scaler params, classifier coeffs
     meta = {
