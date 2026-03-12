@@ -38,6 +38,7 @@ DEFAULT_DB_NAME = "vista_search"
 # Collection names
 VIDEOS_COLLECTION = "videos"
 FRAMES_COLLECTION = "frames"
+FACE_BUILD_STATE_COLLECTION = "face_build_state"
 
 _client: Any = None
 _db: Any = None
@@ -92,9 +93,83 @@ def ensure_indexes() -> bool:
         frames.create_index("objects.color")
         frames.create_index("objects.label")
         frames.create_index("monument.label")
+        face_build = db[FACE_BUILD_STATE_COLLECTION]
+        face_build.create_index([("person", 1), ("image_path_rel", 1)], unique=True)
+        face_build.create_index("person")
         return True
     except Exception as e:
         logger.warning("MongoDB ensure_indexes failed: %s", e)
+        return False
+
+
+def load_face_build_state() -> Dict[str, Dict[str, str]]:
+    """Load face build state from MongoDB: { person -> { rel_path -> embedding_file } }.
+    Returns empty dict if MongoDB is not configured or on error.
+    """
+    db = get_db()
+    if db is None:
+        return {}
+    try:
+        coll = db[FACE_BUILD_STATE_COLLECTION]
+        state: Dict[str, Dict[str, str]] = {}
+        for doc in coll.find({}, {"_id": 0, "person": 1, "image_path_rel": 1, "embedding_file": 1}):
+            person = doc.get("person", "")
+            rel = doc.get("image_path_rel", "")
+            emb = doc.get("embedding_file", "")
+            if person and rel:
+                state.setdefault(person, {})[rel] = emb
+        return state
+    except Exception as e:
+        logger.warning("MongoDB load_face_build_state failed: %s", e)
+        return {}
+
+
+def save_person_face_state(person: str, state_person: Dict[str, str]) -> bool:
+    """Replace all state entries for this person with state_person (rel_path -> embedding_file).
+    Returns True if write succeeded, False if MongoDB not configured or on error.
+    """
+    db = get_db()
+    if db is None:
+        return False
+    try:
+        coll = db[FACE_BUILD_STATE_COLLECTION]
+        coll.delete_many({"person": person})
+        if state_person:
+            docs = [
+                {"person": person, "image_path_rel": rel, "embedding_file": emb}
+                for rel, emb in state_person.items()
+            ]
+            if docs:
+                coll.insert_many(docs)
+        return True
+    except Exception as e:
+        logger.warning("MongoDB save_person_face_state failed: %s", e)
+        return False
+
+
+def remove_person_face_state(person: str) -> bool:
+    """Remove all state entries for this person. Returns True if succeeded."""
+    db = get_db()
+    if db is None:
+        return False
+    try:
+        db[FACE_BUILD_STATE_COLLECTION].delete_many({"person": person})
+        return True
+    except Exception as e:
+        logger.warning("MongoDB remove_person_face_state failed: %s", e)
+        return False
+
+
+def clear_face_build_state() -> bool:
+    """Remove all documents in face_build_state collection. Used for --full rebuild."""
+    db = get_db()
+    if db is None:
+        return False
+    try:
+        db[FACE_BUILD_STATE_COLLECTION].delete_many({})
+        return True
+    except Exception as e:
+        logger.warning("MongoDB clear_face_build_state failed: %s", e)
         return False
 
 

@@ -2,7 +2,7 @@ import argparse
 import os
 import json
 from glob import glob
-from typing import List
+from typing import Dict, List
 
 import cv2
 import numpy as np
@@ -78,6 +78,64 @@ def register_faces_from_folder(
     except Exception as e:
         return count, str(e)
     return count, ""
+
+
+def register_faces_from_paths(
+    image_paths: List[str],
+    label: str,
+    device: str = "cpu",
+    model_name: str = "buffalo_l",
+    conf_thresh: float = 0.8,
+    embeddings_dir: str | None = None,
+    labels_path: str | None = None,
+    silent: bool = False,
+) -> tuple[int, str, Dict[str, str]]:
+    """Register only the given image paths under a label, merging into existing labels.
+
+    Returns (count, error_message, path_to_embedding_filename). Keys in the returned dict
+    use normalized absolute paths for stable state tracking.
+    """
+    emb_dir = embeddings_dir or os.path.join(str(KNOWN_FACES_DIR), "embeddings")
+    labels_out = labels_path or os.path.join(str(KNOWN_FACES_DIR), "labels.json")
+    os.makedirs(emb_dir, exist_ok=True)
+
+    labels: dict = {}
+    if os.path.exists(labels_out):
+        try:
+            with open(labels_out, "r", encoding="utf-8") as f:
+                labels = json.load(f)
+        except Exception:
+            labels = {}
+
+    detector = load_detector(device=device, model_name=model_name, silent=silent)
+    path_to_embedding: Dict[str, str] = {}
+    count = 0
+    for idx, img_path in enumerate(image_paths):
+        img = cv2.imread(img_path)
+        if img is None:
+            continue
+        dets = detect_faces(detector, img, conf_thresh=conf_thresh)
+        if not dets:
+            continue
+        dets.sort(key=lambda d: d.get("confidence", 0.0), reverse=True)
+        emb = get_embedding(dets[0].get("face_obj"))
+        if emb is None:
+            continue
+        base = os.path.splitext(os.path.basename(img_path))[0]
+        out_name = f"{label}_{base}_{idx}.npy"
+        out_path = os.path.join(emb_dir, out_name)
+        save_embedding(out_path, emb)
+        labels[out_name] = label
+        count += 1
+        norm_path = os.path.normpath(os.path.abspath(img_path))
+        path_to_embedding[norm_path] = out_name
+
+    try:
+        with open(labels_out, "w", encoding="utf-8") as f:
+            json.dump(labels, f, indent=2)
+    except Exception as e:
+        return count, str(e), path_to_embedding
+    return count, "", path_to_embedding
 
 
 def main():

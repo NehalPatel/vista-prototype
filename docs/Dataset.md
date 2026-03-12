@@ -4,6 +4,12 @@ https://www.kaggle.com/datasets/danushkumarv/indian-monuments-image-dataset
 Indian cricketers dataset
 https://www.kaggle.com/datasets/aviratgupta/indian-cricketers-dataset
 
+Bollywood Celebrity Faces Localized Dataset (170)
+https://www.kaggle.com/datasets/sroy93/bollywood-celeb-localized-face-dataset-extended
+
+Bollywood celeb localized face dataset
+https://www.kaggle.com/datasets/sushilyadav1998/bollywood-celeb-localized-face-dataset
+
 ## Organizing and building models
 
 ### Your current layout
@@ -39,9 +45,14 @@ After organizing, `training_data/faces/` will have one folder per cricketer and 
 
 ### Build models (CLI)
 
+By default, builds are **incremental**: only new or changed faces/images are processed; existing embeddings and monument features are reused. Face incremental state is stored in MongoDB in the `face_build_state` collection (same DB as detection results; set `MONGODB_URI` in `.env`). Paths are stored relative to the project so state stays valid across machines. Use `--full` for a from-scratch rebuild.
+
 ```bash
-# Build both face and monument models
+# Build both face and monument models (incremental)
 python scripts/build_models.py
+
+# From-scratch rebuild (clear existing face state and monument feature cache)
+python scripts/build_models.py --full
 
 # Only face model (from training_data/faces/)
 python scripts/build_models.py --faces-only

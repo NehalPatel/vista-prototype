@@ -5,11 +5,34 @@ import json
 import numpy as np
 
 
-def load_known_embeddings(known_dir: str) -> List[Tuple[np.ndarray, str]]:
-    """Load known embeddings and optional labels mapping.
+FACE_DB_FILENAME = "face_database.npy"
 
-    Expects embeddings under `known_dir/embeddings/*.npy` and optional `labels.json` mapping filename → label.
+
+def load_known_embeddings(known_dir: str) -> List[Tuple[np.ndarray, str]]:
+    """Load known embeddings for recognition (Step 4 of VISTA_FACE_DETECTION_CHANGES).
+
+    Prefer single mean-embedding database: load face_database.npy (dict person_name → mean
+    embedding), then compare detected face only with each person's mean = one comparison per person.
+    Fall back to legacy: load every embeddings/*.npy + labels.json.
     """
+    db_path = os.path.join(known_dir, FACE_DB_FILENAME)
+    if os.path.isfile(db_path):
+        try:
+            data = np.load(db_path, allow_pickle=True).item()
+            if isinstance(data, dict):
+                known: List[Tuple[np.ndarray, str]] = []
+                for person, vec in data.items():
+                    try:
+                        arr = np.asarray(vec, dtype=np.float32)
+                    except Exception:
+                        continue
+                    known.append((arr, str(person)))
+                if known:
+                    return known
+        except Exception:
+            pass
+
+    # Legacy: individual .npy files + labels.json
     emb_dir = os.path.join(known_dir, "embeddings")
     labels_path = os.path.join(known_dir, "labels.json")
     labels: Dict[str, str] = {}
@@ -20,7 +43,7 @@ def load_known_embeddings(known_dir: str) -> List[Tuple[np.ndarray, str]]:
         except Exception:
             labels = {}
 
-    known: List[Tuple[np.ndarray, str]] = []
+    known = []
     if os.path.isdir(emb_dir):
         for fname in os.listdir(emb_dir):
             if not fname.lower().endswith(".npy"):

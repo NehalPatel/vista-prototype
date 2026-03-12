@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 # Default paths (import from pipeline.paths at runtime to avoid circular import)
 _FEATURE_DIM = 512  # ResNet18 penultimate layer
 _ALLOWED_EXT = (".jpg", ".jpeg", ".png")
+_FEATURE_CACHE_FILENAME = "feature_cache.npz"
 
 
 def _get_device() -> str:
@@ -96,14 +97,49 @@ def collect_monument_images(
     return pairs
 
 
+def _norm_path(p: str) -> str:
+    return os.path.normpath(os.path.abspath(p))
+
+
+def _load_feature_cache(cache_path: str) -> Tuple[List[str], Optional[Any]]:
+    """Load paths and features from cache file. Returns (paths_list, features_array or None)."""
+    import numpy as np
+
+    if not os.path.isfile(cache_path):
+        return [], None
+    try:
+        data = np.load(cache_path, allow_pickle=True)
+        paths = [str(p) for p in data["paths"]]
+        features = data["features"]
+        return paths, features
+    except Exception:
+        return [], None
+
+
+def _save_feature_cache(cache_path: str, paths: List[str], features: Any) -> None:
+    """Save paths and features to cache file."""
+    import numpy as np
+
+    np.savez(
+        cache_path,
+        paths=np.array(paths, dtype=object),
+        features=np.array(features, dtype=np.float32),
+    )
+
+
 def build_and_train_monument_model(
     dataset_dir: str,
     monuments_dir: str,
     model_dir: str,
     device: Optional[str] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
+    clear_feature_cache: bool = False,
 ) -> Dict[str, Any]:
-    """Build feature index from images, train a classifier, save to model_dir. Returns summary dict."""
+    """Build feature index from images, train a classifier, save to model_dir.
+
+    Uses a feature cache so only new images are run through ResNet18 on incremental runs.
+    Set clear_feature_cache=True for a from-scratch run. Returns summary dict.
+    """
     import numpy as np
 
     def _progress(msg: str) -> None:
@@ -114,6 +150,14 @@ def build_and_train_monument_model(
 
     device = device or _get_device()
     os.makedirs(model_dir, exist_ok=True)
+    cache_path = os.path.join(model_dir, _FEATURE_CACHE_FILENAME)
+
+    if clear_feature_cache and os.path.isfile(cache_path):
+        try:
+            os.remove(cache_path)
+        except Exception:
+            pass
+        _progress("Feature cache cleared.")
 
     _progress("Collecting images...")
     pairs = collect_monument_images(dataset_dir, monuments_dir)
@@ -127,15 +171,49 @@ def build_and_train_monument_model(
     n_classes = len(class_names)
     label2idx = {c: i for i, c in enumerate(class_names)}
 
-    _progress(f"Loaded {len(paths)} images, {n_classes} classes. Extracting features...")
-    batch_size = 32
+    cached_paths, cached_features = _load_feature_cache(cache_path)
+    path_to_feature: Dict[str, Any] = {}
+    if cached_features is not None and len(cached_paths) == cached_features.shape[0]:
+        for i, p in enumerate(cached_paths):
+            path_to_feature[_norm_path(p)] = cached_features[i]
+
+    paths_to_extract = [p for p in paths if _norm_path(p) not in path_to_feature]
+    n_cached = len(paths) - len(paths_to_extract)
+    if n_cached:
+        _progress(f"Using {n_cached} cached features, extracting {len(paths_to_extract)} new...")
+    else:
+        _progress(f"Loaded {len(paths)} images, {n_classes} classes. Extracting features...")
+
     all_features: List[Optional[Any]] = []
-    n_batches = (len(paths) + batch_size - 1) // batch_size
-    for i in range(0, len(paths), batch_size):
-        batch_num = i // batch_size + 1
-        _progress(f"  Features batch {batch_num}/{n_batches} ({min(i + batch_size, len(paths))}/{len(paths)} images)")
-        batch = paths[i : i + batch_size]
-        all_features.extend(_extract_features_batch(batch, device))
+    if paths_to_extract:
+        batch_size = 32
+        n_batches = (len(paths_to_extract) + batch_size - 1) // batch_size
+        for i in range(0, len(paths_to_extract), batch_size):
+            batch_num = i // batch_size + 1
+            _progress(
+                f"  Features batch {batch_num}/{n_batches} ({min(i + batch_size, len(paths_to_extract))}/{len(paths_to_extract)} images)"
+            )
+            batch = paths_to_extract[i : i + batch_size]
+            extracted = _extract_features_batch(batch, device)
+            for j, p in enumerate(batch):
+                if j < len(extracted) and extracted[j] is not None:
+                    path_to_feature[_norm_path(p)] = extracted[j]
+
+    for p in paths:
+        norm = _norm_path(p)
+        if norm in path_to_feature:
+            all_features.append(path_to_feature[norm])
+        else:
+            all_features.append(None)
+
+    # Update cache: only store paths that have valid features
+    new_cache_paths = []
+    new_cache_features = []
+    for p, feat in zip(paths, all_features):
+        if feat is not None:
+            new_cache_paths.append(_norm_path(p))
+            new_cache_features.append(feat)
+    _save_feature_cache(cache_path, new_cache_paths, new_cache_features)
 
     X_list = []
     y_list = []
