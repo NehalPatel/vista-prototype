@@ -28,11 +28,13 @@ def register_faces_from_folder(
     conf_thresh: float = 0.8,
     embeddings_dir: str | None = None,
     labels_path: str | None = None,
+    silent: bool = False,
 ) -> tuple[int, str]:
     """Register all faces from a directory under a single label (e.g. celebrity name).
 
     Loads existing labels.json if present and merges new embeddings. Returns (count, error_message).
     If count >= 0 and error_message is empty, success; else error_message describes the failure.
+    silent: if True, suppress InsightFace/ONNX verbose output when loading the detector.
     """
     emb_dir = embeddings_dir or os.path.join(str(KNOWN_FACES_DIR), "embeddings")
     labels_out = labels_path or os.path.join(str(KNOWN_FACES_DIR), "labels.json")
@@ -46,7 +48,7 @@ def register_faces_from_folder(
         except Exception:
             labels = {}
 
-    detector = load_detector(device=device, model_name=model_name)
+    detector = load_detector(device=device, model_name=model_name, silent=silent)
     images = find_images(images_dir)
     if not images:
         return 0, "No images found in directory"

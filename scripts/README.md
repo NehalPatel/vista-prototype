@@ -31,7 +31,7 @@ Then from repo root:
 python scripts/organize_training_data.py
 ```
 
-This **copies** images from inbox into `faces/` and `monuments/` (sanitized folder names). Use `--faces-only` or `--monuments-only` to do one kind. Use `--dry-run` to see what would be copied.
+This **moves** images from inbox into `faces/` and `monuments/` (sanitized folder names). Use `--faces-only` or `--monuments-only` to do one kind. Use `--dry-run` to see what would be done.
 
 ## 2. Build models
 
@@ -47,9 +47,22 @@ python scripts/build_models.py --faces-only
 # Only monument classifier (from training_data/monuments/ and training_data/dataset/)
 python scripts/build_models.py --monuments-only
 
-# Use GPU if available
+# Force GPU (or omit to auto-detect per backend)
 python scripts/build_models.py --device cuda
 ```
+
+### GPU not being used?
+
+Run the GPU test with the **same Python environment** you use for the app (activate your venv/conda first):
+
+```bash
+python scripts/test_gpu.py
+```
+
+It reports NVIDIA driver, PyTorch CUDA, and ONNX Runtime (InsightFace). For GPU:
+
+- **Faces**: `pip install onnxruntime-gpu` (replaces CPU-only `onnxruntime`). If you see **`cublasLt64_12.dll` missing**, see [docs/GPU.md](../docs/GPU.md) (Option A: use CUDA 11.8 build to match PyTorch; Option B: install CUDA 12 Toolkit and add to PATH).
+- **Monuments**: Install PyTorch with CUDA from [pytorch.org](https://pytorch.org) (e.g. CUDA 11.8 or 12.x).
 
 - **Face model**: writes to `vista-prototype/known_faces/` (embeddings + labels). Used by video processing for face recognition.
 - **Monument model**: writes to `vista-prototype/monument_model/`. Used by video processing for monument labels on frames.

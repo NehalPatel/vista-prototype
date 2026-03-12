@@ -15,6 +15,7 @@ yt-dlp
 
 # Face pipeline – required for face detection in the web UI
 insightface
+# Use onnxruntime-gpu for GPU (faster); uninstall onnxruntime first: pip uninstall onnxruntime; pip install onnxruntime-gpu
 onnxruntime
 opencv-python>=4.5
 numpy

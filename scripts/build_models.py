@@ -22,6 +22,15 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+# Suppress ONNX Runtime verbose output (Applied providers, find model, etc.) during build
+def _suppress_onnx_verbose() -> None:
+    try:
+        import onnxruntime as ort  # type: ignore
+        if hasattr(ort, "set_default_logger_severity"):
+            ort.set_default_logger_severity(3)  # 3 = Error only
+    except Exception:
+        pass
+
 from pipeline.paths import (
     TRAINING_FACES_DIR,
     TRAINING_MONUMENTS_DIR,
@@ -35,6 +44,7 @@ def build_face_model(device: str = "cpu", face_model: str = "buffalo_l") -> tupl
     """Register all faces from training_data/faces/<name>/ into known_faces/. Rebuilds from scratch each run."""
     if not os.path.isdir(TRAINING_FACES_DIR):
         return False, "training_data/faces/ not found"
+    _suppress_onnx_verbose()
     try:
         from face_pipeline.register_known import register_faces_from_folder
     except Exception as e:
@@ -58,14 +68,16 @@ def build_face_model(device: str = "cpu", face_model: str = "buffalo_l") -> tupl
     with open(labels_path, "w", encoding="utf-8") as f:
         f.write("{}")
 
+    names = [n for n in sorted(os.listdir(TRAINING_FACES_DIR))
+             if os.path.isdir(os.path.join(TRAINING_FACES_DIR, n))]
+    n_total = len(names)
     total = 0
     errors = []
-    for name in sorted(os.listdir(TRAINING_FACES_DIR)):
+    for idx, name in enumerate(names, start=1):
         path = os.path.join(TRAINING_FACES_DIR, name)
-        if not os.path.isdir(path):
-            continue
+        print(f"  [{idx}/{n_total}] {name}...", flush=True)
         count, err = register_faces_from_folder(
-            path, name, device=device, model_name=face_model, conf_thresh=0.8
+            path, name, device=device, model_name=face_model, conf_thresh=0.8, silent=True
         )
         if err:
             errors.append(f"{name}: {err}")
@@ -83,11 +95,15 @@ def build_monument_model(device: str = "cpu") -> tuple[bool, str]:
     except Exception as e:
         return False, f"pipeline.monuments import failed: {e}"
 
+    def _progress(msg: str) -> None:
+        print(msg, flush=True)
+
     result = build_and_train_monument_model(
         dataset_dir=TRAINING_DATASET_DIR,
         monuments_dir=TRAINING_MONUMENTS_DIR,
         model_dir=MONUMENT_MODEL_DIR,
         device=device,
+        progress_callback=_progress,
     )
     if result.get("trained"):
         n = result.get("n_samples", 0)
@@ -103,25 +119,43 @@ def main() -> int:
     )
     parser.add_argument("--faces-only", action="store_true", help="Only build face recognition model")
     parser.add_argument("--monuments-only", action="store_true", help="Only build monument classifier")
-    parser.add_argument("--device", choices=["cuda", "cpu"], default=None, help="Device (default: cuda if available)")
+    parser.add_argument(
+        "--device",
+        choices=["cuda", "cpu"],
+        default=None,
+        help="Force device for both models (default: auto-detect GPU per backend)",
+    )
     parser.add_argument("--face-model", default="buffalo_l", choices=["buffalo_l", "buffalo_s", "buffalo_sc"], help="InsightFace model for faces")
     args = parser.parse_args()
 
-    device = args.device
-    if device is None:
+    # Auto-detect GPU per backend when not forced: faces use ONNX/CUDA, monuments use PyTorch/CUDA
+    def _gpu_available_onnx() -> bool:
+        try:
+            import onnxruntime as ort  # type: ignore
+            return "CUDAExecutionProvider" in getattr(ort, "get_available_providers", lambda: [])()
+        except Exception:
+            return False
+
+    def _gpu_available_torch() -> bool:
         try:
             import torch  # type: ignore
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            return torch.cuda.is_available()
         except Exception:
-            device = "cpu"
-    print(f"Using device: {device}")
+            return False
+
+    if args.device is not None:
+        face_device = monument_device = args.device
+    else:
+        face_device = "cuda" if _gpu_available_onnx() else "cpu"
+        monument_device = "cuda" if _gpu_available_torch() else "cpu"
+    print(f"Using device – faces: {face_device}, monuments: {monument_device}")
 
     do_faces = args.faces_only or (not args.monuments_only)
     do_monuments = args.monuments_only or (not args.faces_only)
 
     if do_faces:
         print("Building face model from training_data/faces/ ...")
-        ok, msg = build_face_model(device=device, face_model=args.face_model)
+        ok, msg = build_face_model(device=face_device, face_model=args.face_model)
         if ok:
             print("Faces:", msg)
         else:
@@ -131,7 +165,7 @@ def main() -> int:
 
     if do_monuments:
         print("Building monument model from training_data/monuments/ and training_data/dataset/ ...")
-        ok, msg = build_monument_model(device=device)
+        ok, msg = build_monument_model(device=monument_device)
         if ok:
             print("Monuments:", msg)
         else:

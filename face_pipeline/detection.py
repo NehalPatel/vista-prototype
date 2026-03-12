@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import List, Dict, Any, Tuple, Union
+import json
 import os
+import sys
+import time
+import warnings
 
 import numpy as np
 import cv2
+
+# #region agent log
+_DEBUG_LOG = os.path.join(os.path.dirname(__file__), "..", "debug-837bfb.log")
+def _dbg(hid: str, loc: str, msg: str, data: dict) -> None:
+    try:
+        path = os.path.normpath(_DEBUG_LOG)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"sessionId": "837bfb", "hypothesisId": hid, "location": loc, "message": msg, "data": data, "timestamp": int(time.time() * 1000)}) + "\n")
+    except Exception:
+        pass
+# #endregion
 
 
 def _get_onnx_providers(device: str = "cuda") -> List[str]:
@@ -15,14 +31,30 @@ def _get_onnx_providers(device: str = "cuda") -> List[str]:
       (requires onnxruntime-gpu); otherwise falls back to CPU.
     """
     if device == "cpu":
+        # #region agent log
+        _dbg("H2", "detection.py:_get_onnx_providers", "device_cpu", {"device": device, "returned": ["CPUExecutionProvider"]})
+        # #endregion
         return ["CPUExecutionProvider"]
     try:
         import onnxruntime as ort  # type: ignore
         providers = getattr(ort, "get_available_providers", lambda: [])()
         if "CUDAExecutionProvider" in providers:
-            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            out = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            # #region agent log
+            _dbg("H2", "detection.py:_get_onnx_providers", "cuda_chosen", {"device": device, "available": providers, "returned": out})
+            # #endregion
+            return out
     except Exception:
         pass
+    # #region agent log
+    _dbg("H2", "detection.py:_get_onnx_providers", "cuda_fallback_cpu", {"device": device, "reason": "CUDAExecutionProvider not in available or exception"})
+    # #endregion
+    import warnings
+    warnings.warn(
+        "Face model: GPU requested but CUDAExecutionProvider not available. Using CPU. Install onnxruntime-gpu: pip uninstall onnxruntime; pip install onnxruntime-gpu",
+        UserWarning,
+        stacklevel=2,
+    )
     return ["CPUExecutionProvider"]
 
 
@@ -30,16 +62,37 @@ def _get_onnx_providers(device: str = "cuda") -> List[str]:
 FACE_MODEL_CHOICES = ("buffalo_l", "buffalo_s", "buffalo_sc")
 
 
+@contextmanager
+def _suppress_stdout_stderr():
+    """Temporarily redirect stdout/stderr to devnull (e.g. to hide InsightFace/ONNX verbose prints)."""
+    save_stdout, save_stderr = sys.stdout, sys.stderr
+    try:
+        with open(os.devnull, "w", encoding="utf-8") as devnull:
+            sys.stdout = sys.stderr = devnull
+            yield
+    finally:
+        sys.stdout, sys.stderr = save_stdout, save_stderr
+
+
 def load_detector(
     device: str = "cuda",
     det_size: Tuple[int, int] = (640, 640),
     model_name: str = "buffalo_l",
+    silent: bool = False,
 ) -> Any:
     """Initialize insightface FaceAnalysis detector+recognition.
 
     model_name: one of buffalo_l, buffalo_s, buffalo_sc.
+    silent: if True, suppress InsightFace/ONNX verbose output (Applied providers, find model, etc.).
     Returns an app object with .get(image) -> list of faces (bbox, landmarks, embeddings).
     """
+    # Preload PyTorch CUDA DLLs when using GPU so onnxruntime-gpu (CUDA 11.8 build) can find them
+    if device == "cuda":
+        try:
+            import torch  # noqa: F401
+        except ImportError:
+            pass
+
     try:
         from insightface.app import FaceAnalysis
     except Exception as e:
@@ -49,11 +102,45 @@ def load_detector(
 
     name = model_name if model_name in FACE_MODEL_CHOICES else "buffalo_l"
     providers = _get_onnx_providers(device)
-    app = FaceAnalysis(name=name, providers=providers)
-    # ctx_id: 0 = GPU 0, -1 = CPU (InsightFace convention)
-    ctx_id = 0 if device == "cuda" else -1
-    app.prepare(ctx_id=ctx_id, det_size=det_size)
-    return app
+    # ctx_id: 0 = GPU 0, -1 = CPU (InsightFace convention); must match actual providers
+    ctx_id = 0 if "CUDAExecutionProvider" in providers else -1
+    # #region agent log
+    _dbg("H2", "detection.py:load_detector", "load_detector_called", {"device": device, "providers": providers, "ctx_id": ctx_id})
+    # #endregion
+
+    def _create_app() -> Any:
+        app = FaceAnalysis(name=name, providers=providers)
+        app.prepare(ctx_id=ctx_id, det_size=det_size)
+        return app
+
+    def _run() -> Any:
+        nonlocal providers, ctx_id
+        try:
+            return _create_app()
+        except Exception as e:  # e.g. cublasLt64_12.dll missing when CUDA provider loads
+            err_msg = str(e).lower()
+            if "cuda" in err_msg and (
+                "cublaslt" in err_msg or "cublas_lt" in err_msg
+                or "onnxruntime_providers_cuda" in err_msg
+                or "error 126" in err_msg
+                or "could not be found" in err_msg
+                or "specified module" in err_msg
+            ):
+                warnings.warn(
+                    "Face model: CUDA provider failed to load (e.g. cublasLt64_12.dll missing). Using CPU. "
+                    "To use GPU: install onnxruntime-gpu for CUDA 11.8 (see docs/GPU.md Option A) or install CUDA 12 Toolkit (Option B).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                providers = ["CPUExecutionProvider"]
+                ctx_id = -1
+                return _create_app()
+            raise
+
+    if silent:
+        with _suppress_stdout_stderr():
+            return _run()
+    return _run()
 
 
 def _get_face_attr(face: Any, key: str, default: Any = None) -> Any:
