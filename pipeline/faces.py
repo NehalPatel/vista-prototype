@@ -59,7 +59,8 @@ def run_face_detection(
         from face_pipeline.recognition import load_known_embeddings, match
         from face_pipeline.embeddings import get_embedding
         known_dir = str(KNOWN_FACES_DIR)
-        if os.path.isdir(os.path.join(known_dir, "embeddings")):
+        face_db = os.path.join(known_dir, "face_database.npy")
+        if os.path.isdir(os.path.join(known_dir, "embeddings")) or os.path.isfile(face_db):
             known_faces = load_known_embeddings(known_dir)
             if known_faces:
                 print("[trace] face recognition enabled:", len(known_faces), "known embeddings")

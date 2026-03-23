@@ -68,3 +68,25 @@ It reports NVIDIA driver, PyTorch CUDA, and ONNX Runtime (InsightFace). For GPU:
 - **Monument model**: writes to `vista-prototype/monument_model/`. Used by video processing for monument labels on frames.
 
 You can keep adding images to `faces/` and `monuments/` and re-run `build_models.py` to rebuild.
+
+### List low-resolution face persons (JSON report)
+
+Get a JSON list of person names whose folder has any low-resolution image (one low-res → whole folder is treated as low-res; scan stops per person so it’s fast). Use the names to search for better images.
+
+```bash
+python scripts/list_low_resolution_faces.py
+python scripts/list_low_resolution_faces.py -o report.json
+```
+
+Output: `{"low_resolution_persons": ["Name1", "Name2", ...]}`. Default: file size &lt; 20 KB counts as low-res (`--size-kb` to change).
+
+### Option B: Cropped-face fallback (test script)
+
+If you have a dataset of **small cropped face images** (e.g. ~4KB) that the normal detector misses, you can try the duplicate script that upscales small images before detection:
+
+```bash
+python scripts/build_models_cropped_faces.py --faces-only
+python scripts/build_models_cropped_faces.py --full --faces-only
+```
+
+Same args as `build_models.py`; it writes to the same `known_faces/` and MongoDB. Images with max dimension &lt; 256px are upscaled to 640×640 so the detector can find the face. Use this only for testing; prefer a dataset with larger face crops for production.

@@ -20,6 +20,7 @@ Thumbs.db
 
 # Logs
 *.log
+low_resolution_faces.json
 
 # Model weights
 *.pt

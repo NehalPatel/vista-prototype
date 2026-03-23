@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Build face recognition and monument classification models from training_data (CLI, no web).
+"""Option B: Build face model with cropped-face fallback for small images (~4KB).
 
-Reads from:
-  vista-prototype/training_data/faces/<name>/   -> face embeddings in known_faces/
-  vista-prototype/training_data/monuments/<name>/ + training_data/dataset/ -> monument classifier in monument_model/
+Duplicate of build_models.py for testing: when an image is small (max side < 256px),
+we upscale it and run detection so cropped-face datasets can still get embeddings.
+Same usage as build_models.py; writes to the same known_faces/ and MongoDB.
 
 Run from repo root:
-  python scripts/build_models.py              # build both (incremental)
-  python scripts/build_models.py --full       # from-scratch rebuild for both
-  python scripts/build_models.py --faces-only
-  python scripts/build_models.py --monuments-only
+  python scripts/build_models_cropped_faces.py
+  python scripts/build_models_cropped_faces.py --full
+  python scripts/build_models_cropped_faces.py --faces-only
 """
 
 from __future__ import annotations
@@ -18,8 +17,6 @@ import argparse
 import json
 import os
 import sys
-
-import numpy as np
 
 # Run from repo root
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -50,6 +47,15 @@ from pipeline.paths import (
 )
 from face_pipeline.paths import KNOWN_FACES_DIR
 from pipeline.utils import canonical_display_name
+
+import cv2
+import numpy as np
+from face_pipeline.embed_cropped_face import (
+    CROPPED_FACE_MAX_SIZE,
+    get_embedding_for_small_crop,
+)
+from face_pipeline.detection import detect_faces, load_detector
+from face_pipeline.embeddings import get_embedding, save_embedding
 
 BUILD_STATE_FILENAME = "build_state.json"
 FACE_DB_FILENAME = "face_database.npy"
@@ -98,7 +104,7 @@ def _debug_log(message: str, data: dict, hypothesis_id: str = "") -> None:
                     {
                         "id": hypothesis_id,
                         "timestamp": int(time.time() * 1000),
-                        "location": "build_models.py",
+                        "location": "build_models_cropped_faces.py",
                         "message": message,
                         "data": data,
                     }
@@ -119,41 +125,173 @@ def _embedding_index(emb_filename: str) -> int:
         return 0
 
 
-def _load_face_database(known_faces_dir: str) -> dict:
-    """Load face_database.npy if it exists. Returns {person: {"mean": vec, "count": n}}.
-    Converts legacy format (person -> vec) to mean+count.
+def _build_face_mean_database(known_faces_dir: str) -> tuple[bool, str]:
+    """Build a single mean-embedding database per person and save to FACE_DB_FILENAME.
+
+    This reads all .npy embeddings under known_faces/embeddings and groups them by person
+    label using labels.json, then computes one mean vector per person and stores a dict
+    {person_name: embedding_vector} to known_faces/face_database.npy.
+    (VISTA_FACE_DETECTION_CHANGES)
     """
+    emb_dir = os.path.join(known_faces_dir, "embeddings")
+    labels_path = os.path.join(known_faces_dir, "labels.json")
     db_path = os.path.join(known_faces_dir, FACE_DB_FILENAME)
-    if not os.path.isfile(db_path):
-        return {}
-    try:
-        data = np.load(db_path, allow_pickle=True).item()
-        if not isinstance(data, dict):
-            return {}
-        out: dict = {}
-        for person, val in data.items():
+
+    if not os.path.isdir(emb_dir):
+        if os.path.isfile(db_path):
             try:
-                if isinstance(val, dict) and "mean" in val:
-                    out[str(person)] = {
-                        "mean": np.asarray(val["mean"], dtype=np.float32),
-                        "count": int(val.get("count", 1)),
-                    }
-                else:
-                    out[str(person)] = {
-                        "mean": np.asarray(val, dtype=np.float32),
-                        "count": 1,
-                    }
+                os.remove(db_path)
+            except Exception:
+                pass
+        return False, "No embeddings directory found"
+
+    labels: dict = {}
+    if os.path.isfile(labels_path):
+        try:
+            with open(labels_path, "r", encoding="utf-8") as f:
+                labels = json.load(f)
+        except Exception:
+            labels = {}
+
+    person_to_files: dict[str, list[str]] = {}
+    for fname, person in labels.items():
+        if not fname.lower().endswith(".npy"):
+            continue
+        person_to_files.setdefault(person, []).append(fname)
+
+    if not person_to_files:
+        if os.path.isfile(db_path):
+            try:
+                os.remove(db_path)
+            except Exception:
+                pass
+        return False, "No labelled embeddings found"
+
+    db: dict[str, np.ndarray] = {}
+    n_total = 0
+    for person, files in person_to_files.items():
+        display_name = canonical_display_name(person)
+        vecs: list[np.ndarray] = []
+        for fname in files:
+            fpath = os.path.join(emb_dir, fname)
+            if not os.path.isfile(fpath):
+                continue
+            try:
+                v = np.load(fpath).astype(np.float32)
             except Exception:
                 continue
-        return out
-    except Exception:
-        return {}
+            vecs.append(v)
+        if not vecs:
+            continue
+        embeddings = np.stack(vecs, axis=0)
+        mean_embedding = np.mean(embeddings, axis=0).astype(np.float32)
+        db[display_name] = mean_embedding
+        n_total += 1
+
+    if not db:
+        if os.path.isfile(db_path):
+            try:
+                os.remove(db_path)
+            except Exception:
+                pass
+        return False, "No valid embeddings to build database"
+
+    try:
+        np.save(db_path, db, allow_pickle=True)
+    except Exception as e:
+        return False, f"Failed to save face database: {e}"
+
+    return True, f"Built face database for {n_total} person(s)"
 
 
-def _save_face_database(known_faces_dir: str, db: dict) -> None:
-    """Save face database to known_faces_dir/face_database.npy. db: {person: {"mean": vec, "count": n}}."""
-    db_path = os.path.join(known_faces_dir, FACE_DB_FILENAME)
-    np.save(db_path, db, allow_pickle=True)
+def _get_embedding_for_image(detector, img, conf_thresh: float = 0.8):
+    """Option B: For small images use upscale+detect; else normal detect. Returns embedding array or None."""
+    h, w = img.shape[:2]
+    if max(h, w) < CROPPED_FACE_MAX_SIZE:
+        emb = get_embedding_for_small_crop(detector, img, conf_thresh=conf_thresh)
+        if emb is not None:
+            return emb
+    dets = detect_faces(detector, img, conf_thresh=conf_thresh)
+    if not dets:
+        return None
+    dets.sort(key=lambda d: d.get("confidence", 0.0), reverse=True)
+    return get_embedding(dets[0].get("face_obj"))
+
+
+def _register_faces_from_folder_cropped(
+    images_dir: str,
+    label: str,
+    device: str,
+    model_name: str,
+    embeddings_dir: str,
+    labels_path: str,
+    labels: dict,
+    silent: bool,
+    conf_thresh: float = 0.8,
+):
+    """Like register_faces_from_folder but uses Option B: small-crop upscale fallback."""
+    from face_pipeline.register_known import find_images
+    detector = load_detector(device=device, model_name=model_name, silent=silent)
+    images = find_images(images_dir)
+    if not images:
+        return 0, ""
+    count = 0
+    for idx, img_path in enumerate(images):
+        img = cv2.imread(img_path)
+        if img is None:
+            continue
+        emb = _get_embedding_for_image(detector, img, conf_thresh=conf_thresh)
+        if emb is None:
+            continue
+        base = os.path.splitext(os.path.basename(img_path))[0]
+        out_name = f"{label}_{base}_{idx}.npy"
+        out_path = os.path.join(embeddings_dir, out_name)
+        save_embedding(out_path, emb)
+        labels[out_name] = label
+        count += 1
+    try:
+        with open(labels_path, "w", encoding="utf-8") as f:
+            json.dump(labels, f, indent=2)
+    except Exception as e:
+        return count, str(e)
+    return count, ""
+
+
+def _register_faces_from_paths_cropped(
+    image_paths: list,
+    label: str,
+    device: str,
+    model_name: str,
+    embeddings_dir: str,
+    labels_path: str,
+    labels: dict,
+    silent: bool,
+    conf_thresh: float = 0.8,
+):
+    """Like register_faces_from_paths but uses Option B: small-crop upscale fallback. Returns (count, err, path_to_emb)."""
+    path_to_embedding = {}
+    count = 0
+    detector = load_detector(device=device, model_name=model_name, silent=silent)
+    for idx, img_path in enumerate(image_paths):
+        img = cv2.imread(img_path)
+        if img is None:
+            continue
+        emb = _get_embedding_for_image(detector, img, conf_thresh=conf_thresh)
+        if emb is None:
+            continue
+        base = os.path.splitext(os.path.basename(img_path))[0]
+        out_name = f"{label}_{base}_{idx}.npy"
+        out_path = os.path.join(embeddings_dir, out_name)
+        save_embedding(out_path, emb)
+        labels[out_name] = label
+        count += 1
+        path_to_embedding[os.path.normpath(os.path.abspath(img_path))] = out_name
+    try:
+        with open(labels_path, "w", encoding="utf-8") as f:
+            json.dump(labels, f, indent=2)
+    except Exception as e:
+        return count, str(e), path_to_embedding
+    return count, "", path_to_embedding
 
 
 def build_face_model(
@@ -170,18 +308,16 @@ def build_face_model(
         return False, "training_data/faces/ not found"
     _suppress_onnx_verbose()
     try:
-        from face_pipeline.detection import load_detector
-        from face_pipeline.register_known import find_images, get_embeddings_for_paths
+        from face_pipeline.register_known import find_images
     except Exception as e:
         return False, f"face_pipeline import failed: {e}"
 
     known_faces = str(KNOWN_FACES_DIR)
     training_faces_dir = TRAINING_FACES_DIR
     emb_dir = os.path.join(known_faces, "embeddings")
+    labels_path = os.path.join(known_faces, "labels.json")
     state_path_json = os.path.join(known_faces, BUILD_STATE_FILENAME)
     os.makedirs(emb_dir, exist_ok=True)
-
-    detector = load_detector(device=device, model_name=face_model, silent=True)
 
     try:
         from pipeline.mongodb_store import (
@@ -207,23 +343,39 @@ def build_face_model(
                     os.remove(os.path.join(emb_dir, f))
                 except Exception:
                     pass
+        if os.path.isfile(labels_path):
+            try:
+                os.remove(labels_path)
+            except Exception:
+                pass
+        with open(labels_path, "w", encoding="utf-8") as f:
+            f.write("{}")
         clear_face_build_state()
         state: dict = {}
-        db: dict = {}
     else:
         state = load_face_build_state()
         if not state and os.path.isfile(state_path_json):
             _migrate_json_state_to_mongo(state_path_json, training_faces_dir)
             state = load_face_build_state()
-        db = _load_face_database(known_faces)
+        if not os.path.isfile(labels_path):
+            with open(labels_path, "w", encoding="utf-8") as f:
+                f.write("{}")
+
+    labels: dict = {}
+    if os.path.isfile(labels_path):
+        try:
+            with open(labels_path, "r", encoding="utf-8") as f:
+                labels = json.load(f)
+        except Exception:
+            labels = {}
 
     # #region agent log
     _debug_log(
-        "state/db load",
+        "state/labels load",
         {
             "mongo_used": get_db() is not None,
             "len_state": len(state),
-            "len_db": len(db),
+            "len_labels": len(labels),
             "known_faces_resolved": os.path.abspath(known_faces),
             "training_faces_dir_resolved": os.path.abspath(training_faces_dir),
         },
@@ -237,13 +389,52 @@ def build_face_model(
         if os.path.isdir(os.path.join(TRAINING_FACES_DIR, n))
     ]
 
+    if not from_scratch and not state and labels:
+        # Bootstrap state from existing labels + folder order (e.g. first run after adding incremental, or state was deleted)
+        print("  Bootstrapping state from existing embeddings...", flush=True)
+        # #region agent log
+        _debug_log("bootstrap starting", {"current_names_count": len(current_names)}, "H5")
+        # #endregion
+        for name in current_names:
+            path = os.path.join(training_faces_dir, name)
+            images = find_images(path)
+            emb_files = sorted(
+                (f for f, label in labels.items() if label == name),
+                key=_embedding_index,
+            )
+            state[name] = {}
+            for i in range(min(len(images), len(emb_files))):
+                state[name][_rel_path(images[i], training_faces_dir)] = emb_files[i]
+        for name in state:
+            save_person_face_state(name, state[name])
+        # #region agent log
+        first_name = current_names[0] if current_names else None
+        first_state_keys = list(state.get(first_name, {}).keys())[:2] if first_name else []
+        _debug_log(
+            "bootstrap done",
+            {
+                "first_person": first_name,
+                "len_state_keys_first": len(state.get(first_name, {})),
+                "first_state_key_sample": first_state_keys[0] if first_state_keys else None,
+                "len_state_after": len(state),
+            },
+            "H5",
+        )
+        # #endregion
+
     if not from_scratch:
-        # Remove state and db entries for persons no longer in training_data/faces (no per-image .npy to delete)
+        # Remove state and embeddings for persons no longer in training_data/faces
         for name in list(state):
             if name not in current_names:
+                for rel_path, emb_file in state[name].items():
+                    p = os.path.join(emb_dir, emb_file)
+                    if os.path.isfile(p):
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
+                    labels.pop(emb_file, None)
                 del state[name]
-                db.pop(name, None)
-                db.pop(canonical_display_name(name), None)
                 remove_person_face_state(name)
 
     n_total = len(current_names)
@@ -251,25 +442,24 @@ def build_face_model(
     errors = []
 
     for idx, name in enumerate(current_names, start=1):
-        display_name = canonical_display_name(name)
         path = os.path.join(training_faces_dir, name)
         images = find_images(path)
         current_rel_paths = {_rel_path(im, training_faces_dir) for im in images}
 
         if from_scratch:
             print(f"  [{idx}/{n_total}] {name}...", flush=True)
-            pairs = get_embeddings_for_paths(detector, images, conf_thresh=0.8)
-            if not pairs:
-                errors.append(f"{name}: no faces detected")
-                state[name] = {}
+            count, err = _register_faces_from_folder_cropped(
+                path, name, device, face_model, emb_dir, labels_path, labels, True, 0.8
+            )
+            if err:
+                errors.append(f"{name}: {err}")
             else:
-                vecs = np.stack([p[1] for p in pairs], axis=0)
-                mean_vec = np.mean(vecs, axis=0).astype(np.float32)
-                db[display_name] = {"mean": mean_vec, "count": len(pairs)}
-                if display_name != name:
-                    db.pop(name, None)
-                state[name] = {_rel_path(p[0], training_faces_dir): "" for p in pairs}
-                total_new += len(pairs)
+                total_new += count
+            state[name] = {}
+            for i, im in enumerate(images):
+                rel = _rel_path(im, training_faces_dir)
+                base = os.path.splitext(os.path.basename(im))[0]
+                state[name][rel] = f"{name}_{base}_{i}.npy"
             save_person_face_state(name, state[name])
             continue
 
@@ -299,58 +489,50 @@ def build_face_model(
         # #endregion
 
         for rel in removed_rel_paths:
-            state_person.pop(rel, None)
+            emb_file = state_person.pop(rel, None)
+            if emb_file:  # only remove .npy and labels when we had an embedding (skip "" = tried but no face)
+                p = os.path.join(emb_dir, emb_file)
+                if os.path.isfile(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+                labels.pop(emb_file, None)
 
-        if removed_rel_paths:
-            # Re-embed all remaining images for this person to recompute mean (no per-image .npy stored)
-            remaining = [im for im in images if _rel_path(im, training_faces_dir) not in removed_rel_paths]
-            if remaining:
-                print(f"  [{idx}/{n_total}] {name} (re-embed {len(remaining)} after remove)...", flush=True)
-                pairs = get_embeddings_for_paths(detector, remaining, conf_thresh=0.8)
-                if pairs:
-                    vecs = np.stack([p[1] for p in pairs], axis=0)
-                    db[display_name] = {"mean": np.mean(vecs, axis=0).astype(np.float32), "count": len(pairs)}
-                    if display_name != name:
-                        db.pop(name, None)
-                    state_person.clear()
-                    for p in pairs:
-                        state_person[_rel_path(p[0], training_faces_dir)] = ""
-            else:
-                db.pop(name, None)
-                db.pop(display_name, None)
-                state_person.clear()
-        elif new_paths:
+        if new_paths:
             print(f"  [{idx}/{n_total}] {name} (+{len(new_paths)} new)...", flush=True)
-            pairs = get_embeddings_for_paths(detector, new_paths, conf_thresh=0.8)
-            if not pairs:
-                pass  # no new embeddings; state unchanged
+            count, err, path_to_emb = _register_faces_from_paths_cropped(
+                new_paths, name, device, face_model, emb_dir, labels_path, labels, True, 0.8
+            )
+            if err:
+                errors.append(f"{name}: {err}")
             else:
-                total_new += len(pairs)
-                existing = db.get(display_name) or db.get(name)
-                if existing is None:
-                    vecs = np.stack([p[1] for p in pairs], axis=0)
-                    db[display_name] = {"mean": np.mean(vecs, axis=0).astype(np.float32), "count": len(pairs)}
-                else:
-                    # Incremental mean: new_mean = (old_mean * n + sum(new)) / (n + len(new))
-                    n_old = existing["count"]
-                    mean_old = existing["mean"]
-                    new_vecs = np.stack([p[1] for p in pairs], axis=0)
-                    n_new = len(pairs)
-                    new_mean = (mean_old * n_old + np.sum(new_vecs, axis=0)) / (n_old + n_new)
-                    db[display_name] = {"mean": new_mean.astype(np.float32), "count": n_old + n_new}
-                if display_name != name:
-                    db.pop(name, None)
-                for p in pairs:
-                    state_person[_rel_path(p[0], training_faces_dir)] = ""
+                total_new += count
+            # Record every attempted image in state so we don't retry failed (no face detected) images every run.
+            # Use "" for images that had no embedding (small/low-confidence); they stay in state so we skip them next time.
+            for p in new_paths:
+                rel = _rel_path(p, training_faces_dir)
+                abs_norm = os.path.normpath(os.path.abspath(p))
+                emb_file = path_to_emb.get(abs_norm, "") or ""
+                state_person[rel] = emb_file
+                if emb_file:
+                    labels[emb_file] = name
         else:
             print(f"  [{idx}/{n_total}] {name} (no new images)", flush=True)
 
         save_person_face_state(name, state_person)
 
-    # Save single face_database.npy (one mean per person; no per-image .npy in known_faces).
-    _save_face_database(known_faces, db)
-    n_persons = len(db)
-    print(f"Face DB: Saved face_database.npy for {n_persons} person(s)")
+    if not from_scratch:
+        try:
+            with open(labels_path, "w", encoding="utf-8") as f:
+                json.dump(labels, f, indent=2)
+        except Exception as e:
+            errors.append(f"labels save: {e}")
+
+    # After labels/embeddings are up to date, (re)build the mean-embedding database (VISTA_FACE_DETECTION_CHANGES).
+    db_ok, db_msg = _build_face_mean_database(known_faces)
+    prefix = "Face DB:" if db_ok else "Face DB (warning):"
+    print(f"{prefix} {db_msg}")
 
     # #region agent log
     _debug_log(
@@ -364,10 +546,10 @@ def build_face_model(
     )
     # #endregion
 
-    n_persons = len(db)
+    n_total_emb = len([f for f in os.listdir(emb_dir) if f.lower().endswith(".npy")]) if os.path.isdir(emb_dir) else 0
     if errors:
-        return True, f"Registered {total_new} new faces ({n_persons} persons in face_database.npy). Warnings: {'; '.join(errors)}"
-    return True, f"Registered {total_new} new faces ({n_persons} persons in face_database.npy)."
+        return True, f"Registered {total_new} new faces ({n_total_emb} total). Warnings: {'; '.join(errors)}"
+    return True, f"Registered {total_new} new faces ({n_total_emb} total)."
 
 
 def build_monument_model(
@@ -413,11 +595,6 @@ def main() -> int:
         help="From-scratch rebuild (clear existing face embeddings and monument cache before building)",
     )
     parser.add_argument(
-        "--clean",
-        action="store_true",
-        help="Remove known_faces outputs (face_database.npy, embeddings/*.npy, build_state.json) and MongoDB face state before building. Use with --full for a clean full build.",
-    )
-    parser.add_argument(
         "--device",
         choices=["cuda", "cpu"],
         default=None,
@@ -448,35 +625,12 @@ def main() -> int:
         monument_device = "cuda" if _gpu_available_torch() else "cpu"
     print(f"Using device – faces: {face_device}, monuments: {monument_device}")
 
-    if args.clean:
-        known_faces = str(KNOWN_FACES_DIR)
-        emb_dir = os.path.join(known_faces, "embeddings")
-        for f in os.listdir(emb_dir) if os.path.isdir(emb_dir) else []:
-            if f.lower().endswith(".npy"):
-                try:
-                    os.remove(os.path.join(emb_dir, f))
-                except Exception:
-                    pass
-        for fname in [FACE_DB_FILENAME, BUILD_STATE_FILENAME, "labels.json"]:
-            p = os.path.join(known_faces, fname)
-            if os.path.isfile(p):
-                try:
-                    os.remove(p)
-                except Exception:
-                    pass
-        try:
-            from pipeline.mongodb_store import clear_face_build_state
-            clear_face_build_state()
-            print("Cleaned known_faces and face build state.")
-        except Exception:
-            print("Cleaned known_faces (MongoDB clear skipped).")
-
     do_faces = args.faces_only or (not args.monuments_only)
     do_monuments = args.monuments_only or (not args.faces_only)
 
     if do_faces:
         mode = "from scratch" if args.full else "incremental"
-        print(f"Building face model from training_data/faces/ ({mode})...")
+        print(f"Building face model from training_data/faces/ (Option B: cropped-face fallback, {mode})...")
         ok, msg = build_face_model(
             device=face_device, face_model=args.face_model, from_scratch=args.full
         )
