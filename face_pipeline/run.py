@@ -16,7 +16,7 @@ from .paths import (
     KNOWN_FACES_DIR,
 )
 from .detection import load_detector, detect_faces, crop_face, save_image, FACE_MODEL_CHOICES
-from .embeddings import get_embedding, save_embedding
+from .embeddings import get_embedding
 from .recognition import load_known_embeddings, match
 
 
@@ -51,6 +51,18 @@ def main():
     detector = load_detector(device=args.device, model_name=args.model)
 
     faces_json: Dict[str, Any] = {}
+    # Single embeddings file: key "frame_key|det_i" -> embedding (saved once at end)
+    embeddings_filename = "embeddings.npy"
+    embed_path = os.path.join(str(EMBED_DIR), embeddings_filename)
+    existing_embeddings: Dict[str, np.ndarray] = {}
+    if os.path.exists(embed_path) and not args.force:
+        try:
+            loaded = np.load(embed_path, allow_pickle=True).item()
+            if isinstance(loaded, dict):
+                existing_embeddings = dict(loaded)
+        except Exception:
+            pass
+    embeddings_store: Dict[str, np.ndarray] = {}
 
     for idx, frame_path in enumerate(frames, start=1):
         img = cv2.imread(frame_path)
@@ -67,17 +79,17 @@ def main():
             crop = crop_face(img, bbox)
             crop_name = f"face_{idx:04d}_{det_i:02d}.jpg"
             crop_path = os.path.join(str(CROPS_DIR), crop_name)
-            embed_name = f"face_{idx:04d}_{det_i:02d}.npy"
-            embed_path = os.path.join(str(EMBED_DIR), embed_name)
+            emb_key = f"{frame_key}|{det_i}"
 
-            if not args.force and os.path.exists(crop_path) and os.path.exists(embed_path):
-                # Already processed; record and continue
+            already_done = not args.force and os.path.exists(crop_path) and emb_key in existing_embeddings
+
+            if already_done:
                 record = {
                     "bbox": bbox,
                     "confidence": det["confidence"],
-                    "aligned": True,  # InsightFace provides aligned embeddings
+                    "aligned": True,
                     "face_crop": crop_path.replace("\\", "/"),
-                    "embedding_file": embed_path.replace("\\", "/"),
+                    "embedding_key": emb_key,
                 }
                 if "landmarks" in det:
                     record["landmarks"] = det["landmarks"]
@@ -86,25 +98,29 @@ def main():
 
             save_image(crop, crop_path)
 
-            emb = get_embedding(det["face_obj"])  # embedding from detector pipeline
+            emb = get_embedding(det["face_obj"])
             if emb is None:
-                # As a fallback, we could re-run recognition module, but for now skip
                 print(f"Warning: embedding missing for {frame_path} det #{det_i}")
                 continue
 
-            save_embedding(embed_path, emb)
+            embeddings_store[emb_key] = emb
 
             record = {
                 "bbox": bbox,
                 "confidence": det["confidence"],
                 "aligned": True,
                 "face_crop": crop_path.replace("\\", "/"),
-                "embedding_file": embed_path.replace("\\", "/"),
+                "embedding_key": emb_key,
             }
             if "landmarks" in det:
                 record["landmarks"] = det["landmarks"]
 
             faces_json[frame_key].append(record)
+
+    # Save single embeddings file for all faces (one .npy instead of one per face)
+    if embeddings_store:
+        existing_embeddings.update(embeddings_store)
+        np.save(embed_path, existing_embeddings, allow_pickle=True)
 
     faces_json_path = os.path.join(str(FACE_RESULTS_DIR), "faces.json")
     with open(faces_json_path, "w", encoding="utf-8") as f:
@@ -114,18 +130,30 @@ def main():
     if args.do_recognition:
         known = load_known_embeddings(args.known_faces_dir)
         thresholds = {"same": 0.6, "maybe": 0.8}
+        # Load single embeddings file
+        all_embeddings: Dict[str, np.ndarray] = {}
+        if os.path.exists(embed_path):
+            try:
+                all_embeddings = np.load(embed_path, allow_pickle=True).item()
+            except Exception:
+                pass
         recog: Dict[str, Any] = {}
         for frame_key, entries in faces_json.items():
             recog.setdefault(frame_key, [])
             for entry in entries:
+                emb_key = entry.get("embedding_key")
+                if not emb_key:
+                    continue
                 try:
-                    vec = np.load(entry["embedding_file"]).astype("float32")
+                    vec = np.asarray(all_embeddings.get(emb_key), dtype=np.float32)
+                    if vec is None or vec.size == 0:
+                        continue
                 except Exception:
                     continue
                 m = match(vec, known, thresholds)
                 recog_entry = {
                     "face_crop": entry["face_crop"],
-                    "embedding_file": entry["embedding_file"],
+                    "embedding_key": emb_key,
                     "recognized_as": m["label"],
                     "distance": m["distance"],
                     "confidence": m["confidence"],

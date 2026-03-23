@@ -3,6 +3,7 @@ import os
 import json
 
 import numpy as np
+from pipeline.utils import canonical_display_name
 
 
 FACE_DB_FILENAME = "face_database.npy"
@@ -21,12 +22,16 @@ def load_known_embeddings(known_dir: str) -> List[Tuple[np.ndarray, str]]:
             data = np.load(db_path, allow_pickle=True).item()
             if isinstance(data, dict):
                 known: List[Tuple[np.ndarray, str]] = []
-                for person, vec in data.items():
+                for person, val in data.items():
                     try:
-                        arr = np.asarray(vec, dtype=np.float32)
+                        # Support both: plain vector or {"mean": vec, "count": n}
+                        if isinstance(val, dict) and "mean" in val:
+                            arr = np.asarray(val["mean"], dtype=np.float32)
+                        else:
+                            arr = np.asarray(val, dtype=np.float32)
                     except Exception:
                         continue
-                    known.append((arr, str(person)))
+                    known.append((arr, canonical_display_name(str(person))))
                 if known:
                     return known
         except Exception:
@@ -52,6 +57,7 @@ def load_known_embeddings(known_dir: str) -> List[Tuple[np.ndarray, str]]:
             try:
                 vec = np.load(fpath).astype(np.float32)
                 label = labels.get(fname, os.path.splitext(fname)[0])
+                label = canonical_display_name(str(label))
                 known.append((vec, label))
             except Exception:
                 continue

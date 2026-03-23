@@ -119,6 +119,23 @@ python scripts/build_models.py --monuments-only
 python scripts/build_models.py --device cuda
 ```
 
+**3. Full reset and rebuild from scratch** (when faces are missing or labels changed):
+
+```bash
+# (PowerShell) Remove previous runtime/build outputs: models, cached features, frames, and past results
+Remove-Item -Recurse -Force "vista-prototype/known_faces/*","vista-prototype/monument_model/*","vista-prototype/results/*","vista-prototype/frames/*","vista-prototype/detections/*","vista-prototype/face_results/*"
+
+# Move new images from inbox to final training folders
+python scripts/organize_training_data.py
+
+# Clean model state + rebuild both face and monument models from scratch
+python scripts/build_models.py --clean --full
+```
+
+Label normalization during model build:
+- `John_Wick` is stored/displayed as `John Wick`
+- `Taj_mahal` is stored/displayed as `Taj Mahal`
+
 After building, process a video in the web UI or CLI; recognized faces and monuments will appear in the results. You can also upload images and train from the **Training** page in the web UI (`/training`).
 
 ### Notes

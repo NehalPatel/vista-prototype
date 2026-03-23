@@ -91,3 +91,12 @@ def sanitize_dataset_name(name: str) -> str:
     cleaned = cleaned.replace(" ", "_")
     cleaned = re.sub(r"_+", "_", cleaned).strip("_")
     return cleaned[:128] if cleaned else ""
+
+
+def canonical_display_name(name: str) -> str:
+    """Return preferred display name for known dataset folder labels."""
+    aliases = {
+        "John_Wick": "John Wick",
+        "Taj_mahal": "Taj Mahal",
+    }
+    return aliases.get(name, name)

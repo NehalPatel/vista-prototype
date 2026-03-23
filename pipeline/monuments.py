@@ -13,6 +13,7 @@ import os
 import warnings
 from glob import glob
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from pipeline.utils import canonical_display_name
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +90,11 @@ def collect_monument_images(
             folder = os.path.join(base_dir, name)
             if not os.path.isdir(folder):
                 continue
+            display_name = canonical_display_name(name)
             for ext in _ALLOWED_EXT:
                 for path in glob(os.path.join(folder, "*" + ext)):
                     if os.path.isfile(path):
-                        pairs.append((path, name))
+                        pairs.append((path, display_name))
 
     return pairs
 

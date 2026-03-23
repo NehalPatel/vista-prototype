@@ -176,3 +176,22 @@ Benefits of this change:
 ### Optional Future Optimization
 
 For large databases (>1000 people), integrate a vector index such as FAISS for fast nearest-neighbour search.
+
+---
+
+### Clean and full build
+
+To remove all face build outputs and state, then rebuild from scratch (from repo root):
+
+```bash
+python scripts/build_models.py --clean --full
+```
+
+- `--clean` removes `known_faces/face_database.npy`, `known_faces/embeddings/*.npy`, `known_faces/build_state.json`, `known_faces/labels.json`, and clears MongoDB face build state.
+- `--full` then runs a from-scratch face (and monument) build.
+
+Faces-only clean + full build:
+
+```bash
+python scripts/build_models.py --clean --full --faces-only
+```

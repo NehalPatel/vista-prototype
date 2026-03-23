@@ -2,7 +2,7 @@ import argparse
 import os
 import json
 from glob import glob
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import cv2
 import numpy as np
@@ -18,6 +18,32 @@ def find_images(folder: str) -> List[str]:
     for p in patterns:
         files.extend(glob(os.path.join(folder, p), recursive=True))
     return sorted(files)
+
+
+def get_embeddings_for_paths(
+    detector: object,
+    image_paths: List[str],
+    conf_thresh: float = 0.8,
+) -> List[Tuple[str, np.ndarray]]:
+    """Get embeddings for image paths without saving any .npy files.
+
+    Returns list of (image_path, embedding) for each image that yielded a face and embedding.
+    Used when building only face_database.npy (one mean per person) with no per-image .npy.
+    """
+    result: List[Tuple[str, np.ndarray]] = []
+    for img_path in image_paths:
+        img = cv2.imread(img_path)
+        if img is None:
+            continue
+        dets = detect_faces(detector, img, conf_thresh=conf_thresh)
+        if not dets:
+            continue
+        dets.sort(key=lambda d: d.get("confidence", 0.0), reverse=True)
+        emb = get_embedding(dets[0].get("face_obj"))
+        if emb is None:
+            continue
+        result.append((os.path.normpath(os.path.abspath(img_path)), emb))
+    return result
 
 
 def register_faces_from_folder(

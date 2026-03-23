@@ -231,6 +231,7 @@ def index_detection_results_to_mongodb(
     object_model: str,
     face_model: str,
     fps: float = 1.0,
+    clip_start_sec: float = 0.0,
 ) -> bool:
     """
     Build video and frame documents from pipeline results and write to MongoDB.
@@ -312,6 +313,8 @@ def index_detection_results_to_mongodb(
     video_doc = {
         "video_id": video_id,
         "source_url": source_url,
+        # Seconds from start of full video where extracted frames begin (scan window).
+        "clip_start_sec": round(float(clip_start_sec), 4),
         "title": (meta.get("title") or "").strip() or None,
         "duration_sec": meta.get("duration") if isinstance(meta.get("duration"), (int, float)) else None,
         "thumbnail": (meta.get("thumbnail") or "").strip() or None,

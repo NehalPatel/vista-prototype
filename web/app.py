@@ -695,6 +695,7 @@ def api_process():
                 object_model=object_model,
                 face_model=face_model_name,
                 fps=float(fps),
+                clip_start_sec=float(scan_start_seconds),
             )
             # Simple console message so it's obvious when indexing succeeds
             if mongo_ok:

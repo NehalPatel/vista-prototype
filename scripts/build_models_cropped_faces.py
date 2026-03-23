@@ -46,8 +46,10 @@ from pipeline.paths import (
     MONUMENT_MODEL_DIR,
 )
 from face_pipeline.paths import KNOWN_FACES_DIR
+from pipeline.utils import canonical_display_name
 
 import cv2
+import numpy as np
 from face_pipeline.embed_cropped_face import (
     CROPPED_FACE_MAX_SIZE,
     get_embedding_for_small_crop,
@@ -56,6 +58,7 @@ from face_pipeline.detection import detect_faces, load_detector
 from face_pipeline.embeddings import get_embedding, save_embedding
 
 BUILD_STATE_FILENAME = "build_state.json"
+FACE_DB_FILENAME = "face_database.npy"
 
 
 def _rel_path(path: str, base: str) -> str:
@@ -120,6 +123,85 @@ def _embedding_index(emb_filename: str) -> int:
         return int(base.split("_")[-1])
     except (ValueError, IndexError):
         return 0
+
+
+def _build_face_mean_database(known_faces_dir: str) -> tuple[bool, str]:
+    """Build a single mean-embedding database per person and save to FACE_DB_FILENAME.
+
+    This reads all .npy embeddings under known_faces/embeddings and groups them by person
+    label using labels.json, then computes one mean vector per person and stores a dict
+    {person_name: embedding_vector} to known_faces/face_database.npy.
+    (VISTA_FACE_DETECTION_CHANGES)
+    """
+    emb_dir = os.path.join(known_faces_dir, "embeddings")
+    labels_path = os.path.join(known_faces_dir, "labels.json")
+    db_path = os.path.join(known_faces_dir, FACE_DB_FILENAME)
+
+    if not os.path.isdir(emb_dir):
+        if os.path.isfile(db_path):
+            try:
+                os.remove(db_path)
+            except Exception:
+                pass
+        return False, "No embeddings directory found"
+
+    labels: dict = {}
+    if os.path.isfile(labels_path):
+        try:
+            with open(labels_path, "r", encoding="utf-8") as f:
+                labels = json.load(f)
+        except Exception:
+            labels = {}
+
+    person_to_files: dict[str, list[str]] = {}
+    for fname, person in labels.items():
+        if not fname.lower().endswith(".npy"):
+            continue
+        person_to_files.setdefault(person, []).append(fname)
+
+    if not person_to_files:
+        if os.path.isfile(db_path):
+            try:
+                os.remove(db_path)
+            except Exception:
+                pass
+        return False, "No labelled embeddings found"
+
+    db: dict[str, np.ndarray] = {}
+    n_total = 0
+    for person, files in person_to_files.items():
+        display_name = canonical_display_name(person)
+        vecs: list[np.ndarray] = []
+        for fname in files:
+            fpath = os.path.join(emb_dir, fname)
+            if not os.path.isfile(fpath):
+                continue
+            try:
+                v = np.load(fpath).astype(np.float32)
+            except Exception:
+                continue
+            vecs.append(v)
+        if not vecs:
+            continue
+        embeddings = np.stack(vecs, axis=0)
+        mean_embedding = np.mean(embeddings, axis=0).astype(np.float32)
+        db[display_name] = mean_embedding
+        n_total += 1
+
+    if not db:
+        if os.path.isfile(db_path):
+            try:
+                os.remove(db_path)
+            except Exception:
+                pass
+        return False, "No valid embeddings to build database"
+
+    try:
+        np.save(db_path, db, allow_pickle=True)
+    except Exception as e:
+        return False, f"Failed to save face database: {e}"
+
+    return True, f"Built face database for {n_total} person(s)"
 
 
 def _get_embedding_for_image(detector, img, conf_thresh: float = 0.8):
@@ -446,6 +528,11 @@ def build_face_model(
                 json.dump(labels, f, indent=2)
         except Exception as e:
             errors.append(f"labels save: {e}")
+
+    # After labels/embeddings are up to date, (re)build the mean-embedding database (VISTA_FACE_DETECTION_CHANGES).
+    db_ok, db_msg = _build_face_mean_database(known_faces)
+    prefix = "Face DB:" if db_ok else "Face DB (warning):"
+    print(f"{prefix} {db_msg}")
 
     # #region agent log
     _debug_log(
