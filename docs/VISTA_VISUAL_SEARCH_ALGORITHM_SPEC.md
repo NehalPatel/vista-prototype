@@ -1,237 +1,75 @@
-# VISTA Visual Search Algorithm Spec
+# VISTA visual search: implemented store vs future retrieval
 
-## Objective
-- Build a thesis-ready visual search baseline for user-provided videos.
-- Target query style: natural language retrieval focused on person and monument entities.
-- Core task: return ranked video moments (video id + frame + timestamp) with evidence from face recognition and monument recognition.
-- Primary metric: search relevance (Precision@K, Recall@K, MRR, Success@K).
+This document describes (1) what the **vista-prototype** repository **actually implements** today, and (2) a **target** retrieval algorithm for a **future** search service. It replaces earlier text that referenced non-existent modules such as `search_engine.service` or `VisualSearchService`.
 
-## Current System Audit
-- Existing pipeline outputs one `detection_results.json` per video under `vista-prototype/results/<video_id>/` (see `pipeline.paths.RESULTS_DIR`, `get_video_results_paths`).
-- Top-level JSON: `video_id`, `confidence_threshold`, `object_model`, `face_model`, `frames` (array), optional `run_stats`.
-- Each frame entry in `frames` includes:
+---
+
+## Part A — Implemented today (repository)
+
+### Pipeline outputs
+
+- One `detection_results.json` per processed video under `vista-prototype/results/<video_id>/` (see `pipeline.paths`, `get_video_results_paths`).
+- Top-level JSON includes `video_id`, `confidence_threshold`, `object_model`, `face_model`, `frames` (array), optional `run_stats`.
+- Each element of `frames` includes:
   - `frame` — filename (e.g. `frame_0001.jpg`)
-  - `detections` — object detections (YOLO; class, color, label, bbox, conf)
-  - `faces` — list of `{ "bbox", "confidence", "label", "recognition_confidence" (optional) }` from `pipeline.faces.run_face_detection`
-  - `monument` — frame-level classifier output `{ "label", "confidence", "bbox" (optional) }` from `pipeline.monuments.run_monument_recognition`
-- Metadata: `metadata.txt` in the same folder contains `source: <url>`; the indexer uses this when `source_url` is not provided.
-- Gaps addressed by this spec:
-  - Canonical frame-event schema and MongoDB indexing implemented in `search_engine.service`.
-  - Natural-language query parsing (person, monument, time, confidence) and strict/soft retrieval implemented.
+  - `detections` — YOLO outputs: class, color, label, bbox, conf
+  - `faces` — list of `{ bbox, confidence, label, recognition_confidence (optional) }` from `pipeline.faces.run_face_detection`
+  - `monument` — frame-level classifier output `{ label, confidence, bbox (optional) }` from `pipeline.monuments.run_monument_recognition`
 
-## Proposed Algorithm
-1. Ingest per-video detection JSON.
-2. Convert each frame entry to a canonical frame event.
-3. Normalize labels and confidences.
-4. Upsert video metadata and replace frame events (idempotent re-index).
-5. Parse natural-language query into slots.
-6. Run strict retrieval first; fallback to soft matching when strict hits are empty.
-7. Score and rank frames, then group by video.
+### Optional MongoDB indexing
 
-## Data Model
-### Canonical Frame Event Schema
-```json
-{
-  "video_id": "2vjEKevuV4k",
-  "frame": "frame_0007.jpg",
-  "timestamp_sec": 6.0,
-  "faces": [
-    {
-      "label": "nehal",
-      "display_label": "Nehal",
-      "raw_label": "Maybe:Nehal",
-      "is_maybe": true,
-      "detection_confidence": 0.93,
-      "match_confidence": 0.81,
-      "bbox": [120, 45, 210, 170]
-    }
-  ],
-  "monument": {
-    "label": "taj mahal",
-    "display_label": "Taj Mahal",
-    "raw_label": "Taj Mahal",
-    "confidence": 0.88,
-    "bbox": [8, 8, 1260, 710]
-  },
-  "scores": {
-    "face_match_max": 0.81,
-    "face_detection_max": 0.93,
-    "monument_confidence": 0.88
-  },
-  "source_url": "https://www.youtube.com/watch?v=2vjEKevuV4k",
-  "model_versions": {
-    "object_model": "yolov8n",
-    "face_model": "buffalo_l",
-    "monument_model": "monument_classifier"
-  },
-  "indexed_at": "UTC datetime"
-}
-```
+- **Module:** `pipeline.mongodb_store`
+- **Environment:** `MONGODB_URI` or `MONGO_URI`; optional `VISTA_DB_NAME` (default `vista_search`).
+- **Collections:** `videos` (one document per video), `frames` (one document per frame with nested `objects`, `faces`, `monument`).
+- **Indexes:** include `faces.label`, `objects.class`, `objects.color`, `objects.label`, `monument.label`, plus uniqueness on `video_id` and `(video_id, frame_filename)`.
+- **Trigger:** after a successful web run, `index_detection_results_to_mongodb` in `web/app.py` (not the CLI `implementation.py`).
 
-### Normalization Rules
-- Lowercase + trim labels for canonical matching (`label`).
-- Preserve human display form in `display_label`.
-- Strip `Maybe:` prefix into canonical label and keep uncertainty in `is_maybe`.
-- Map empty/invalid labels to `unknown`.
-- Face: use `confidence` as detection confidence, `recognition_confidence` or `match_confidence` as match confidence; both are kept for scoring.
+### Not implemented in this repository
 
-## MongoDB Baseline
-- **Connection**: `MONGO_URI` (default `mongodb://localhost:27017`), `MONGO_DB` (default `vista_search`). Implemented in `VisualSearchService` (`search_engine.service`).
+- No `search_engine` package, no `VisualSearchService`, no `frame_events` collection (the store uses `frames`).
+- No `POST /api/index-video` or `GET /api/search` routes in `web/app.py`.
+- No automated IR evaluation harness or labeled query sets.
 
-### Collections
-- `videos`
-  - `video_id` (unique)
-  - `source_url`
-  - `results_path`
-  - `model_versions`
-  - `indexed_at`
-- `frame_events`
-  - one document per frame event using the canonical schema above.
+---
 
-### Indexes
-- `videos.video_id` (unique)
-- `frame_events.video_id + frame` (unique)
-- `frame_events.faces.label` (multikey)
-- `frame_events.monument.label`
-- `frame_events.timestamp_sec`
-- `frame_events.video_id`
+## Part B — Target retrieval design (future work)
 
-### Idempotent Re-indexing
-- For each index request:
-  - Upsert one `videos` record.
-  - Delete existing `frame_events` for that `video_id`.
-  - Insert rebuilt frame events.
-- Result: rescans replace stale frame data without duplicates.
+The following is a **design specification** for a separate search API or service that reads the same MongoDB (or exported JSON).
 
-## Query Understanding
-### Slot Design
-- `person` (optional)
-- `monument` (optional)
-- `time/window` (optional)
-- `min_confidence` (optional)
+### Proposed algorithm
 
-### Hybrid Parser
-- Rule-based extraction first:
-  - Match known person labels from indexed data (longest match first).
-  - Match known monument labels from indexed data (longest match first).
-  - Parse `before`, `after`, `between`/`from ... to` time constraints (seconds).
-  - Parse confidence constraints (`conf >= 0.7`, `confidence 0.8`).
-- Fallback for unseen entities: if query contains ` at ` and person or monument slot is still empty, split on ` at `; use canonical label of left part as person and right part as monument (e.g. "alex at qutub minar").
-- Soft stage: when strict retrieval returns zero hits, tokenize query (tokens ≥3 chars) and regex-match on `faces.label` and `monument.label`.
+1. Ingest per-video `detection_results.json` (or read from `frames` / `videos`).
+2. Normalize labels (trim, lowercase for matching, handle `Maybe:` face prefixes).
+3. Parse natural-language queries into slots: person, monument, object class/color, optional time window, optional confidence floor.
+4. Run **strict** retrieval (all active slots must match one frame); if zero hits, optionally run **soft** token fallback on labels.
+5. Score and rank frames; group by `video_id`.
 
-## Retrieval and Ranking
-### Strict Stage
-- Build filter from extracted slots:
-  - person → `faces` with `$elemMatch: { label: person }`
-  - monument → `monument.label == monument`
-  - time window → `timestamp_sec` in [min, max]
-  - confidence floor → frame matches if **either** `scores.face_match_max >= min_confidence` **or** `scores.monument_confidence >= min_confidence`
+### Illustrative MongoDB filters (on `frames`)
 
-### Soft Stage (Fallback)
-- Triggered when strict retrieval has zero hits.
-- Use token-level regex matching across face and monument labels.
+- Person: `faces` array element match on `label`.
+- Monument: `monument.label`.
+- Object: `objects` array with matching `class` and/or `color` / `label`.
+- Time: `time_sec` within window.
 
-### Ranking
-- Score each frame by:
-  - exact entity matches (person/monument)
-  - partial entity matches
-  - confidence signals (`face_match_max`, `monument_confidence`)
-- Stable sort by:
-  1. score (desc)
-  2. timestamp (asc)
-  3. frame id (asc)
+### API sketch (not implemented)
 
-## API Contracts
-### `POST /api/index-video`
-- Purpose: index an already processed video into MongoDB (idempotent re-index per video).
-- Request JSON:
-  - `video_id` or `url` (required): if only `url` is provided, video_id is derived via `extract_video_id_from_url` / `sanitize_id`.
-  - `url`: used as `source_url`; if omitted, indexer reads `source: ...` from `results/<video_id>/metadata.txt`.
-  - `detection_json_path`: optional; if omitted, path is `results/<video_id>/detection_results.json` (via `get_video_results_paths`).
-```json
-{
-  "video_id": "2vjEKevuV4k",
-  "url": "https://www.youtube.com/watch?v=2vjEKevuV4k",
-  "detection_json_path": "optional absolute or repo-relative path"
-}
-```
-- Response:
-```json
-{
-  "status": "indexed",
-  "video_id": "2vjEKevuV4k",
-  "indexed_frames": 180,
-  "source_url": "...",
-  "detection_json_path": "..."
-}
-```
-- Indexing can also be triggered from `POST /api/process` by setting `index_to_search: true` in the request body; the same indexer runs after processing (or when returning cached results).
+- `GET /api/search?q=...` — would return ranked frame evidence and `source_url` from `videos`.
+- `GET /api/search/suggestions` — would list distinct indexed people and monuments.
 
-### `GET /api/search?q=...`
-- Purpose: natural-language visual retrieval.
-- Query params:
-  - `q` (required)
-  - `page` (optional, default `1`)
-  - `page_size` (optional, default `20`, max `200`)
-- Response:
-  - `query`, `mode` (`strict` or `soft`), `slots` (person, monument, min/max_timestamp_sec, min_confidence)
-  - `pagination`: `page`, `page_size`, `total_hits`
-  - `results`: list of `{ video_id, source_url, frames: [ { frame, timestamp_sec, rank_score, faces, monument, scores } ] }` grouped by video
+### Evaluation (future)
 
-### `GET /api/search/suggestions`
-- Purpose: return known indexed people and monuments for UI autocomplete.
-- Query params:
-  - `limit` (optional, default `50`, max 500)
-- Response:
-```json
-{
-  "people": ["nehal", "virat kohli"],
-  "monuments": ["taj mahal", "india gate"],
-  "counts": { "people": 2, "monuments": 2 }
-}
-```
+- Precision@K, Recall@K, MRR, Success@K require a frozen corpus and relevance judgments.
+- Until then, report **processing** metrics from `run_stats` and qualitative inspection.
 
-## Experiments and Evaluation
-### Dataset Construction
-- Use sampled labeled queries over your provided video corpus.
-- Query buckets:
-  - face-only
-  - monument-only
-  - combined face+monument
+### Risks and controls
 
-### Metrics
-- Precision@K
-- Recall@K
-- MRR
-- Success@K
-- Secondary: indexing latency, query latency.
+- Face uncertainty (`Maybe:`): preserve in JSON and penalize in future ranking.
+- Monument model is frame-level, not object-level: treat as frame evidence.
+- Timestamp mapping follows extraction FPS and frame index conventions used when writing `time_sec`.
 
-### Ablation Studies
-- parser-only vs parser + keyword fallback
-- strict-only vs strict + soft fallback
-- confidence threshold sweep sensitivity
+---
 
-## Risks and Controls
-- Face recognition uncertainty (`Maybe:` labels): preserve uncertainty and penalize score.
-- Monument model is frame-level, not object-level: treat as frame evidence with explicit confidence.
-- Missing labels in low-quality frames: soft fallback prevents zero-result failures.
-- Timestamp precision tied to 1 fps extraction: frame filename `frame_NNNN.jpg` yields `timestamp_sec = N - 1` (e.g. `frame_0001.jpg` → 0 sec, `frame_0007.jpg` → 6 sec). Document this baseline assumption.
+## Thesis alignment
 
-## Thesis Chapter Mapping
-- Chapter 1: Problem and motivation (natural-language face/monument search in video)
-- Chapter 2: Related work (video retrieval, face recognition, place recognition, metadata indexing)
-- Chapter 3: System architecture and canonical schema
-- Chapter 4: Query parsing + retrieval/ranking algorithm
-- Chapter 5: Experimental setup and results (metrics + ablations)
-- Chapter 6: Limitations and future work (vector retrieval, multilingual queries, temporal modeling)
-
-## Implementation
-- **Search service**: `search_engine.service` — `VisualSearchService` (index_video, parse_query, search, suggestions), label/timestamp helpers, strict/soft retrieval and ranking.
-- **Web API**: `web.app` — `POST /api/index-video`, `GET /api/search`, `GET /api/search/suggestions`; lazy-instantiated `VisualSearchService`; `POST /api/process` supports `index_to_search`.
-- **Tests**: `tests.test_visual_search_service` — label normalization, timestamp parsing, query slots, scoring.
-- **Dependencies**: `pymongo` required for search APIs (see `requirements.txt`).
-
-## Public Interface and Baseline Scope
-- Baseline backend: MongoDB metadata/event retrieval.
-- Baseline UI/API: indexing endpoint, search endpoint, suggestions endpoint.
-- Out of baseline scope: vector DB reranking, generic object-color retrieval, multimodal text embeddings.
+- **Chapter 4** of the thesis describes the implemented architecture and MongoDB shape.
+- **Chapter 6** describes Part B as **conceptual** retrieval design, not shipped code.
