@@ -90,7 +90,9 @@ def _migrate_json_state_to_mongo(state_path: str, training_faces_dir: str) -> No
 # #region agent log
 def _debug_log(message: str, data: dict, hypothesis_id: str = "") -> None:
     import time
-    log_path = os.path.join(REPO_ROOT, "debug-b6867e.log")
+    if os.environ.get("VISTA_DEBUG_BUILD", "").strip() not in ("1", "true", "yes", "on"):
+        return
+    log_path = os.path.join(REPO_ROOT, "debug-build_models.log")
     try:
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(
@@ -364,7 +366,6 @@ def build_face_model(
     )
     # #endregion
 
-    n_persons = len(db)
     if errors:
         return True, f"Registered {total_new} new faces ({n_persons} persons in face_database.npy). Warnings: {'; '.join(errors)}"
     return True, f"Registered {total_new} new faces ({n_persons} persons in face_database.npy)."
