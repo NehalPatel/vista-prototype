@@ -13,13 +13,11 @@ def create_app() -> Flask:
     # Ensure runtime directories (including training_data) exist at startup
     ensure_directories()
 
-    # Ensure known_faces dir exists so "Train faces" can write embeddings
+    # Ensure known_faces dir exists so "Train faces" can write face_database.npy
     try:
         from face_pipeline.paths import KNOWN_FACES_DIR
 
-        kf = str(KNOWN_FACES_DIR)
-        os.makedirs(kf, exist_ok=True)
-        os.makedirs(os.path.join(kf, "embeddings"), exist_ok=True)
+        os.makedirs(str(KNOWN_FACES_DIR), exist_ok=True)
     except Exception:
         pass
 

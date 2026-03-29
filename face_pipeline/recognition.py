@@ -1,67 +1,34 @@
 from typing import List, Tuple, Dict, Any
 import os
-import json
 
 import numpy as np
 from pipeline.utils import canonical_display_name
 
-
-FACE_DB_FILENAME = "face_database.npy"
+from .face_database import FACE_DB_FILENAME
 
 
 def load_known_embeddings(known_dir: str) -> List[Tuple[np.ndarray, str]]:
-    """Load known embeddings for recognition (Step 4 of VISTA_FACE_DETECTION_CHANGES).
-
-    Prefer single mean-embedding database: load face_database.npy (dict person_name → mean
-    embedding), then compare detected face only with each person's mean = one comparison per person.
-    Fall back to legacy: load every embeddings/*.npy + labels.json.
-    """
+    """Load known embeddings from face_database.npy only (mean vector per person)."""
     db_path = os.path.join(known_dir, FACE_DB_FILENAME)
-    if os.path.isfile(db_path):
-        try:
-            data = np.load(db_path, allow_pickle=True).item()
-            if isinstance(data, dict):
-                known: List[Tuple[np.ndarray, str]] = []
-                for person, val in data.items():
-                    try:
-                        # Support both: plain vector or {"mean": vec, "count": n}
-                        if isinstance(val, dict) and "mean" in val:
-                            arr = np.asarray(val["mean"], dtype=np.float32)
-                        else:
-                            arr = np.asarray(val, dtype=np.float32)
-                    except Exception:
-                        continue
-                    known.append((arr, canonical_display_name(str(person))))
-                if known:
-                    return known
-        except Exception:
-            pass
-
-    # Legacy: individual .npy files + labels.json
-    emb_dir = os.path.join(known_dir, "embeddings")
-    labels_path = os.path.join(known_dir, "labels.json")
-    labels: Dict[str, str] = {}
-    if os.path.exists(labels_path):
-        try:
-            with open(labels_path, "r", encoding="utf-8") as f:
-                labels = json.load(f)
-        except Exception:
-            labels = {}
-
-    known = []
-    if os.path.isdir(emb_dir):
-        for fname in os.listdir(emb_dir):
-            if not fname.lower().endswith(".npy"):
-                continue
-            fpath = os.path.join(emb_dir, fname)
+    if not os.path.isfile(db_path):
+        return []
+    try:
+        data = np.load(db_path, allow_pickle=True).item()
+        if not isinstance(data, dict):
+            return []
+        known: List[Tuple[np.ndarray, str]] = []
+        for person, val in data.items():
             try:
-                vec = np.load(fpath).astype(np.float32)
-                label = labels.get(fname, os.path.splitext(fname)[0])
-                label = canonical_display_name(str(label))
-                known.append((vec, label))
+                if isinstance(val, dict) and "mean" in val:
+                    arr = np.asarray(val["mean"], dtype=np.float32)
+                else:
+                    arr = np.asarray(val, dtype=np.float32)
             except Exception:
                 continue
-    return known
+            known.append((arr, canonical_display_name(str(person))))
+        return known
+    except Exception:
+        return []
 
 
 def cosine_distance(a: np.ndarray, b: np.ndarray) -> float:

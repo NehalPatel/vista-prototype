@@ -2,7 +2,7 @@
 
 Runs InsightFace face detection on each image in a directory (e.g. YOLO-annotated
 frames), draws face boxes, and returns per-frame face counts and bboxes for the API.
-If known_faces embeddings exist, runs recognition and draws celebrity names.
+If known_faces/face_database.npy exists, runs recognition and draws celebrity names.
 If insightface is not installed, returns empty results and skips drawing.
 """
 
@@ -29,7 +29,7 @@ def run_face_detection(
 
     - If source_frames_dir is set, runs InsightFace on those (clean) frames for better detection,
       then draws cyan face boxes on the corresponding images in annotated_frames_dir.
-    - If known_faces/embeddings exist, runs recognition and draws celebrity names on boxes.
+    - If known_faces/face_database.npy exists, runs recognition and draws celebrity names on boxes.
     - Returns faces_by_frame: { frame_filename: [ {"bbox", "confidence", "label" (if recognition)}, ... ] }
     - If insightface is not available, returns {} and does not modify images.
     """
@@ -60,19 +60,19 @@ def run_face_detection(
         from face_pipeline.embeddings import get_embedding
         known_dir = str(KNOWN_FACES_DIR)
         face_db = os.path.join(known_dir, "face_database.npy")
-        if os.path.isdir(os.path.join(known_dir, "embeddings")) or os.path.isfile(face_db):
+        if os.path.isfile(face_db):
             known_faces = load_known_embeddings(known_dir)
             if known_faces:
                 print("[trace] face recognition enabled:", len(known_faces), "known embeddings")
             else:
                 logger.info(
-                    "Face recognition: no known face embeddings in %s. All faces will show as 'Unknown'. "
-                    "Add a face dataset in Training Data Manager and click 'Train faces' to recognize people.",
+                    "Face recognition: face_database.npy is empty or invalid in %s. All faces will show as 'Unknown'. "
+                    "Add a face dataset in Training Data Manager and click 'Train faces', or run scripts/build_models.py.",
                     known_dir,
                 )
         else:
             logger.info(
-                "Face recognition: known_faces/embeddings not found. Add a face dataset and click 'Train faces' to recognize people."
+                "Face recognition: face_database.npy not found. Add a face dataset and train, or run scripts/build_models.py."
             )
     except Exception as e:
         logger.debug("Face recognition skipped (no known_faces or import error): %s", e)
