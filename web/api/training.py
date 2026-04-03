@@ -134,6 +134,13 @@ def api_training_build_monument_model():
     from pipeline.monuments import build_and_train_monument_model  # noqa: WPS433
 
     ensure_directories()
+    payload = request.get_json(silent=True) or {}
+    preprocess = (payload.get("preprocess") or "none").strip().lower()
+    if preprocess not in ("none", "rembg"):
+        preprocess = "none"
+    clear_cache = bool(payload.get("clear_feature_cache", False))
+    class_weight_balanced = bool(payload.get("class_weight_balanced", False))
+
     device = "cpu"
     try:
         import torch  # type: ignore
@@ -148,6 +155,9 @@ def api_training_build_monument_model():
             monuments_dir=TRAINING_MONUMENTS_DIR,
             model_dir=MONUMENT_MODEL_DIR,
             device=device,
+            clear_feature_cache=clear_cache,
+            preprocess=preprocess,
+            class_weight_balanced=class_weight_balanced,
         )
         if result.get("trained"):
             return jsonify(result)

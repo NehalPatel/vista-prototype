@@ -329,11 +329,15 @@ def build_face_model(
 
 
 def build_monument_model(
-    device: str = "cpu", clear_feature_cache: bool = False
+    device: str = "cpu",
+    clear_feature_cache: bool = False,
+    preprocess: str = "none",
+    class_weight_balanced: bool = False,
 ) -> tuple[bool, str]:
     """Train monument classifier from training_data/monuments/ and training_data/dataset/.
 
     If clear_feature_cache is True, discards cached ResNet18 features and extracts all again.
+    preprocess: \"none\" or \"rembg\" (requires rembg + onnxruntime).
     """
     try:
         from pipeline.monuments import build_and_train_monument_model
@@ -350,6 +354,8 @@ def build_monument_model(
         device=device,
         progress_callback=_progress,
         clear_feature_cache=clear_feature_cache,
+        preprocess=preprocess,
+        class_weight_balanced=class_weight_balanced,
     )
     if result.get("trained"):
         n = result.get("n_samples", 0)
@@ -382,6 +388,17 @@ def main() -> int:
         help="Force device for both models (default: auto-detect GPU per backend)",
     )
     parser.add_argument("--face-model", default="buffalo_l", choices=["buffalo_l", "buffalo_s", "buffalo_sc"], help="InsightFace model for faces")
+    parser.add_argument(
+        "--monument-preprocess",
+        choices=["none", "rembg"],
+        default="none",
+        help="Monument training/inference: rembg removes background before ResNet18 (install requirements-monuments-extra.txt).",
+    )
+    parser.add_argument(
+        "--monument-class-weight-balanced",
+        action="store_true",
+        help="Use sklearn class_weight=balanced for monument LogisticRegression.",
+    )
     args = parser.parse_args()
 
     # Auto-detect GPU per backend when not forced: faces use ONNX/CUDA, monuments use PyTorch/CUDA
@@ -448,7 +465,10 @@ def main() -> int:
         mode = "from scratch" if args.full else "incremental (using feature cache)"
         print(f"Building monument model from training_data/monuments/ and training_data/dataset/ ({mode})...")
         ok, msg = build_monument_model(
-            device=monument_device, clear_feature_cache=args.full
+            device=monument_device,
+            clear_feature_cache=args.full,
+            preprocess=args.monument_preprocess,
+            class_weight_balanced=args.monument_class_weight_balanced,
         )
         if ok:
             print("Monuments:", msg)

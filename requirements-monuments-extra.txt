@@ -1,0 +1,5 @@
+# Optional: monument background removal (rembg) and evaluation plots.
+# Install: pip install -r requirements-monuments-extra.txt
+rembg>=2.0.50
+onnxruntime>=1.16.0
+matplotlib>=3.7.0

@@ -1,0 +1,4 @@
+{
+  "excluded_classes": [],
+  "_comment": "Folder names under training_data/monuments/ or training_data/dataset/ to skip (case-insensitive). Use for multi-building complexes you do not want in the classifier."
+}

@@ -13,14 +13,19 @@ import os
 import warnings
 from glob import glob
 from typing import Any, Callable, Dict, List, Optional, Tuple
+from pipeline.paths import MONUMENT_POLICY_PATH
 from pipeline.utils import canonical_display_name
 
 logger = logging.getLogger(__name__)
 
-# Default paths (import from pipeline.paths at runtime to avoid circular import)
-_FEATURE_DIM = 512  # ResNet18 penultimate layer
+# ResNet18 penultimate layer
+_FEATURE_DIM = 512
 _ALLOWED_EXT = (".jpg", ".jpeg", ".png")
-_FEATURE_CACHE_FILENAME = "feature_cache.npz"
+
+
+def _feature_cache_basename(preprocess: str) -> str:
+    safe = "".join(c if c.isalnum() else "_" for c in preprocess.strip().lower())
+    return f"feature_cache_{safe or 'none'}.npz"
 
 
 def _get_device() -> str:
@@ -40,10 +45,60 @@ def _load_image_cv(path: str):
     return img
 
 
+def _load_excluded_monument_classes(policy_path: Optional[str]) -> set[str]:
+    path = policy_path or MONUMENT_POLICY_PATH
+    if not path or not os.path.isfile(path):
+        return set()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        raw = data.get("excluded_classes") or []
+        return {str(x).strip().lower() for x in raw if str(x).strip()}
+    except Exception:
+        logger.warning("Could not read monument policy at %s", path)
+        return set()
+
+
+def _rembg_rgb_from_array(img_rgb: Any) -> Optional[Any]:
+    """Return RGB uint8 image with background removed (composited on white)."""
+    import numpy as np
+    import cv2  # type: ignore
+
+    if img_rgb is None:
+        return None
+    try:
+        from rembg import remove  # type: ignore
+    except ImportError:
+        logger.warning("rembg not installed; skip rembg preprocess (pip install -r requirements-monuments-extra.txt)")
+        return None
+    bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+    ok, buf = cv2.imencode(".png", bgr)
+    if not ok:
+        return None
+    try:
+        out_bytes = remove(buf.tobytes())
+    except Exception as exc:
+        logger.warning("rembg failed: %s", exc)
+        return None
+    arr = np.frombuffer(out_bytes, dtype=np.uint8)
+    dec = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+    if dec is None:
+        return None
+    if dec.shape[2] == 4:
+        b, g, r, a = cv2.split(dec)
+        a_f = a.astype(np.float32) / 255.0
+        rgb = np.stack([r, g, b], axis=2).astype(np.float32)
+        bg = np.full_like(rgb, 255.0)
+        comp = rgb * a_f[..., np.newaxis] + bg * (1.0 - a_f[..., np.newaxis])
+        return np.clip(comp, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(dec, cv2.COLOR_BGR2RGB)
+
+
 def _extract_features_batch(
     image_paths: List[str],
     device: str,
     resize: Tuple[int, int] = (224, 224),
+    preprocess: str = "none",
 ) -> List[Optional[Any]]:
     """Extract ResNet18 features (no final FC) for a list of image paths. Returns list of 512-d vectors or None."""
     import numpy as np
@@ -63,12 +118,18 @@ def _extract_features_batch(
         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
 
+    use_rembg = preprocess == "rembg"
     features = []
     for path in image_paths:
         img = _load_image_cv(path)
         if img is None:
             features.append(None)
             continue
+        if use_rembg:
+            img = _rembg_rgb_from_array(img)
+            if img is None:
+                features.append(None)
+                continue
         t = transform(img).unsqueeze(0).to(device)
         with torch.no_grad():
             f = model(t)
@@ -79,9 +140,14 @@ def _extract_features_batch(
 def collect_monument_images(
     dataset_dir: str,
     monuments_dir: str,
+    policy_path: Optional[str] = None,
 ) -> List[Tuple[str, str]]:
-    """Collect (image_path, monument_label) from dataset/ (folder=class) and monuments/ (folder=name)."""
+    """Collect (image_path, monument_label) from dataset/ (folder=class) and monuments/ (folder=name).
+
+    Skips folder names listed under excluded_classes in monument_policy.json (see MONUMENT_POLICY_PATH).
+    """
     pairs: List[Tuple[str, str]] = []
+    excluded = _load_excluded_monument_classes(policy_path)
 
     for base_dir in (dataset_dir, monuments_dir):
         if not os.path.isdir(base_dir):
@@ -90,7 +156,11 @@ def collect_monument_images(
             folder = os.path.join(base_dir, name)
             if not os.path.isdir(folder):
                 continue
+            if name.strip().lower() in excluded:
+                continue
             display_name = canonical_display_name(name)
+            if display_name.strip().lower() in excluded:
+                continue
             for ext in _ALLOWED_EXT:
                 for path in glob(os.path.join(folder, "*" + ext)):
                     if os.path.isfile(path):
@@ -136,6 +206,9 @@ def build_and_train_monument_model(
     device: Optional[str] = None,
     progress_callback: Optional[Callable[[str], None]] = None,
     clear_feature_cache: bool = False,
+    policy_path: Optional[str] = None,
+    preprocess: str = "none",
+    class_weight_balanced: bool = False,
 ) -> Dict[str, Any]:
     """Build feature index from images, train a classifier, save to model_dir.
 
@@ -152,17 +225,23 @@ def build_and_train_monument_model(
 
     device = device or _get_device()
     os.makedirs(model_dir, exist_ok=True)
-    cache_path = os.path.join(model_dir, _FEATURE_CACHE_FILENAME)
+    preprocess = preprocess if preprocess in ("none", "rembg") else "none"
+    pol = policy_path if policy_path is not None else MONUMENT_POLICY_PATH
+    cache_path = os.path.join(model_dir, _feature_cache_basename(preprocess))
 
-    if clear_feature_cache and os.path.isfile(cache_path):
-        try:
-            os.remove(cache_path)
-        except Exception:
-            pass
-        _progress("Feature cache cleared.")
+    if clear_feature_cache:
+        removed_any = False
+        for fn in glob(os.path.join(model_dir, "feature_cache*.npz")):
+            try:
+                os.remove(fn)
+                removed_any = True
+            except OSError:
+                pass
+        if removed_any:
+            _progress("Feature cache cleared.")
 
     _progress("Collecting images...")
-    pairs = collect_monument_images(dataset_dir, monuments_dir)
+    pairs = collect_monument_images(dataset_dir, monuments_dir, policy_path=pol)
     if not pairs:
         return {"error": "No images found in dataset or monuments directories", "trained": False}
 
@@ -196,7 +275,7 @@ def build_and_train_monument_model(
                 f"  Features batch {batch_num}/{n_batches} ({min(i + batch_size, len(paths_to_extract))}/{len(paths_to_extract)} images)"
             )
             batch = paths_to_extract[i : i + batch_size]
-            extracted = _extract_features_batch(batch, device)
+            extracted = _extract_features_batch(batch, device, preprocess=preprocess)
             for j, p in enumerate(batch):
                 if j < len(extracted) and extracted[j] is not None:
                     path_to_feature[_norm_path(p)] = extracted[j]
@@ -240,7 +319,10 @@ def build_and_train_monument_model(
     X_scaled = scaler.fit_transform(X)
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=FutureWarning, message=".*multi_class.*")
-        clf = LogisticRegression(max_iter=1000, random_state=42)
+        lr_kw: Dict[str, Any] = {"max_iter": 1000, "random_state": 42}
+        if class_weight_balanced:
+            lr_kw["class_weight"] = "balanced"
+        clf = LogisticRegression(**lr_kw)
         clf.fit(X_scaled, y)
 
     # Save: class names, scaler params, classifier coeffs
@@ -248,6 +330,8 @@ def build_and_train_monument_model(
         "class_names": class_names,
         "n_classes": n_classes,
         "feature_dim": X.shape[1],
+        "preprocess": preprocess,
+        "class_weight_balanced": bool(class_weight_balanced),
     }
     meta_path = os.path.join(model_dir, "meta.json")
     with open(meta_path, "w", encoding="utf-8") as f:
@@ -276,6 +360,8 @@ def load_monument_model(model_dir: str) -> Optional[Dict[str, Any]]:
         return None
     with open(meta_path, "r", encoding="utf-8") as f:
         meta = json.load(f)
+    meta.setdefault("preprocess", "none")
+    meta.setdefault("class_weight_balanced", False)
     coef = np.load(os.path.join(model_dir, "coef.npy"))
     intercept = np.load(os.path.join(model_dir, "intercept.npy"))
     mean = np.load(os.path.join(model_dir, "scaler_mean.npy"))
@@ -317,7 +403,8 @@ def predict_monument(
     if model is None:
         return None, 0.0
     device = device or _get_device()
-    feats = _extract_features_batch([image_path], device)
+    preprocess = str(model.get("preprocess", "none"))
+    feats = _extract_features_batch([image_path], device, preprocess=preprocess)
     if not feats or feats[0] is None:
         return None, 0.0
     X = np.array([feats[0]], dtype=np.float32)
@@ -339,6 +426,7 @@ def run_monument_recognition(
         return {}
 
     device = device or _get_device()
+    preprocess = str(model.get("preprocess", "none"))
     results = {}
     frame_files = [
         f for f in sorted(os.listdir(frames_dir))
@@ -352,7 +440,7 @@ def run_monument_recognition(
     for i in range(0, len(paths), batch_size):
         batch_paths = paths[i : i + batch_size]
         batch_names = frame_files[i : i + batch_size]
-        feats = _extract_features_batch(batch_paths, device)
+        feats = _extract_features_batch(batch_paths, device, preprocess=preprocess)
         valid = []
         valid_names = []
         for j, f in enumerate(feats):
