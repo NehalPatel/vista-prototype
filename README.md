@@ -60,7 +60,7 @@ At runtime, data is written under a nested `vista-prototype/` directory inside t
     │       ├── metadata.txt            # summary + device info
     │       └── detections_video.mp4   # rendered video (may fall back to .avi)
     ├── training_data/        # datasets for face & monument training (see below)
-    ├── known_faces/          # face recognition model (embeddings; built by build_models.py)
+    ├── known_faces/          # face_database.npy (mean embedding per person; built by build_models.py or Train faces)
     └── monument_model/       # monument classifier (built by build_models.py)
 ```
 
@@ -118,6 +118,37 @@ python scripts/build_models.py --monuments-only
 # Use GPU if available
 python scripts/build_models.py --device cuda
 ```
+
+**Inspect face database (mean vectors per person):**
+
+```bash
+python scripts/read_face_database.py
+python scripts/read_face_database.py --json
+```
+
+**2.5 Clean monument dataset quality (strict, review-first):**
+
+Use this before monument retraining when classes contain noisy images (wrong landmark, people-dominant, blurry).
+
+```bash
+# Scan only (no file moves), one class pilot
+python scripts/curate_monuments.py --mode scan --class-name tajmahal
+
+# Quarantine flagged files for manual review (no deletion)
+python scripts/curate_monuments.py --mode quarantine --class-name tajmahal
+
+# Run on all monument classes
+python scripts/curate_monuments.py --mode quarantine
+
+# Restore quarantined files for one class (if needed)
+python scripts/curate_monuments.py --mode restore --class-name tajmahal
+
+# Permanently delete quarantined files only after review
+python scripts/curate_monuments.py --mode purge --yes
+```
+
+By default, flagged files are moved to `vista-prototype/training_data/monuments_quarantine/` and a JSON report is written under `vista-prototype/training_data/curation_reports/`.
+Duplicate and near-duplicate images are also flagged (strict mode, per class) and moved to quarantine.
 
 **3. Full reset and rebuild from scratch** (when faces are missing or labels changed):
 

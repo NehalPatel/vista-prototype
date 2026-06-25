@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 
 import numpy as np
@@ -48,11 +49,11 @@ from pipeline.paths import (
     TRAINING_DATASET_DIR,
     MONUMENT_MODEL_DIR,
 )
+from face_pipeline.face_database import FACE_DB_FILENAME, load_face_database, save_face_database
 from face_pipeline.paths import KNOWN_FACES_DIR
 from pipeline.utils import canonical_display_name
 
 BUILD_STATE_FILENAME = "build_state.json"
-FACE_DB_FILENAME = "face_database.npy"
 
 
 def _rel_path(path: str, base: str) -> str:
@@ -90,7 +91,9 @@ def _migrate_json_state_to_mongo(state_path: str, training_faces_dir: str) -> No
 # #region agent log
 def _debug_log(message: str, data: dict, hypothesis_id: str = "") -> None:
     import time
-    log_path = os.path.join(REPO_ROOT, "debug-b6867e.log")
+    if os.environ.get("VISTA_DEBUG_BUILD", "").strip() not in ("1", "true", "yes", "on"):
+        return
+    log_path = os.path.join(REPO_ROOT, "debug-build_models.log")
     try:
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(
@@ -119,43 +122,6 @@ def _embedding_index(emb_filename: str) -> int:
         return 0
 
 
-def _load_face_database(known_faces_dir: str) -> dict:
-    """Load face_database.npy if it exists. Returns {person: {"mean": vec, "count": n}}.
-    Converts legacy format (person -> vec) to mean+count.
-    """
-    db_path = os.path.join(known_faces_dir, FACE_DB_FILENAME)
-    if not os.path.isfile(db_path):
-        return {}
-    try:
-        data = np.load(db_path, allow_pickle=True).item()
-        if not isinstance(data, dict):
-            return {}
-        out: dict = {}
-        for person, val in data.items():
-            try:
-                if isinstance(val, dict) and "mean" in val:
-                    out[str(person)] = {
-                        "mean": np.asarray(val["mean"], dtype=np.float32),
-                        "count": int(val.get("count", 1)),
-                    }
-                else:
-                    out[str(person)] = {
-                        "mean": np.asarray(val, dtype=np.float32),
-                        "count": 1,
-                    }
-            except Exception:
-                continue
-        return out
-    except Exception:
-        return {}
-
-
-def _save_face_database(known_faces_dir: str, db: dict) -> None:
-    """Save face database to known_faces_dir/face_database.npy. db: {person: {"mean": vec, "count": n}}."""
-    db_path = os.path.join(known_faces_dir, FACE_DB_FILENAME)
-    np.save(db_path, db, allow_pickle=True)
-
-
 def build_face_model(
     device: str = "cpu",
     face_model: str = "buffalo_l",
@@ -177,9 +143,8 @@ def build_face_model(
 
     known_faces = str(KNOWN_FACES_DIR)
     training_faces_dir = TRAINING_FACES_DIR
-    emb_dir = os.path.join(known_faces, "embeddings")
     state_path_json = os.path.join(known_faces, BUILD_STATE_FILENAME)
-    os.makedirs(emb_dir, exist_ok=True)
+    os.makedirs(known_faces, exist_ok=True)
 
     detector = load_detector(device=device, model_name=face_model, silent=True)
 
@@ -201,12 +166,6 @@ def build_face_model(
         print("  Warning: MongoDB not connected (set MONGODB_URI in .env). Incremental state will not be saved; every run will reprocess all images.", flush=True)
 
     if from_scratch:
-        for f in os.listdir(emb_dir) if os.path.isdir(emb_dir) else []:
-            if f.lower().endswith(".npy"):
-                try:
-                    os.remove(os.path.join(emb_dir, f))
-                except Exception:
-                    pass
         clear_face_build_state()
         state: dict = {}
         db: dict = {}
@@ -215,7 +174,7 @@ def build_face_model(
         if not state and os.path.isfile(state_path_json):
             _migrate_json_state_to_mongo(state_path_json, training_faces_dir)
             state = load_face_build_state()
-        db = _load_face_database(known_faces)
+        db = load_face_database(known_faces)
 
     # #region agent log
     _debug_log(
@@ -348,7 +307,7 @@ def build_face_model(
         save_person_face_state(name, state_person)
 
     # Save single face_database.npy (one mean per person; no per-image .npy in known_faces).
-    _save_face_database(known_faces, db)
+    save_face_database(known_faces, db)
     n_persons = len(db)
     print(f"Face DB: Saved face_database.npy for {n_persons} person(s)")
 
@@ -364,7 +323,6 @@ def build_face_model(
     )
     # #endregion
 
-    n_persons = len(db)
     if errors:
         return True, f"Registered {total_new} new faces ({n_persons} persons in face_database.npy). Warnings: {'; '.join(errors)}"
     return True, f"Registered {total_new} new faces ({n_persons} persons in face_database.npy)."
@@ -415,7 +373,7 @@ def main() -> int:
     parser.add_argument(
         "--clean",
         action="store_true",
-        help="Remove known_faces outputs (face_database.npy, embeddings/*.npy, build_state.json) and MongoDB face state before building. Use with --full for a clean full build.",
+        help="Remove known_faces outputs (face_database.npy, legacy embeddings/, labels.json, build_state.json) and MongoDB face state before building. Use with --full for a clean full build.",
     )
     parser.add_argument(
         "--device",
@@ -451,12 +409,11 @@ def main() -> int:
     if args.clean:
         known_faces = str(KNOWN_FACES_DIR)
         emb_dir = os.path.join(known_faces, "embeddings")
-        for f in os.listdir(emb_dir) if os.path.isdir(emb_dir) else []:
-            if f.lower().endswith(".npy"):
-                try:
-                    os.remove(os.path.join(emb_dir, f))
-                except Exception:
-                    pass
+        if os.path.isdir(emb_dir):
+            try:
+                shutil.rmtree(emb_dir)
+            except Exception:
+                pass
         for fname in [FACE_DB_FILENAME, BUILD_STATE_FILENAME, "labels.json"]:
             p = os.path.join(known_faces, fname)
             if os.path.isfile(p):

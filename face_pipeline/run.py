@@ -37,7 +37,7 @@ def main():
     parser.add_argument("--model", choices=list(FACE_MODEL_CHOICES), default="buffalo_l", help="Face model: buffalo_l (best), buffalo_s, buffalo_sc")
     parser.add_argument("--force", action="store_true", help="Overwrite existing crops/embeddings")
     parser.add_argument("--do-recognition", action="store_true", help="Perform recognition against known faces")
-    parser.add_argument("--known-faces-dir", default=str(KNOWN_FACES_DIR), help="Directory containing known face embeddings and labels.json")
+    parser.add_argument("--known-faces-dir", default=str(KNOWN_FACES_DIR), help="Directory containing face_database.npy")
 
     args = parser.parse_args()
     ensure_dirs()
