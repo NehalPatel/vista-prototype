@@ -13,7 +13,7 @@ import os
 import warnings
 from glob import glob
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from pipeline.paths import MONUMENT_POLICY_PATH
+from pipeline.paths import MONUMENT_POLICY_PATH, MONUMENT_YOLO_CLS_WEIGHTS
 from pipeline.utils import canonical_display_name
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,26 @@ logger = logging.getLogger(__name__)
 # ResNet18 penultimate layer
 _FEATURE_DIM = 512
 _ALLOWED_EXT = (".jpg", ".jpeg", ".png")
+_DEFAULT_BACKEND = "yolo_cls"  # preferred when weights exist; falls back to resnet
+
+
+def resolve_monument_backend(explicit: Optional[str] = None) -> str:
+    """Return 'yolo_cls' or 'resnet'. Default prefers YOLO-cls when best.pt exists."""
+    raw = (explicit or os.environ.get("VISTA_MONUMENT_BACKEND") or "").strip().lower()
+    if raw in ("yolo_cls", "yolo", "ultralytics"):
+        return "yolo_cls"
+    if raw in ("resnet", "legacy", "sklearn"):
+        return "resnet"
+    if os.path.isfile(MONUMENT_YOLO_CLS_WEIGHTS):
+        return _DEFAULT_BACKEND
+    return "resnet"
+
+
+def monument_model_available(model_dir: str, backend: Optional[str] = None) -> bool:
+    be = resolve_monument_backend(backend)
+    if be == "yolo_cls":
+        return os.path.isfile(MONUMENT_YOLO_CLS_WEIGHTS)
+    return os.path.isfile(os.path.join(model_dir, "meta.json"))
 
 
 def _feature_cache_basename(preprocess: str) -> str:
@@ -461,11 +481,24 @@ def predict_monument(
     device: Optional[str] = None,
     confidence_threshold: float = 0.75,
     margin_threshold: float = 0.15,
+    backend: Optional[str] = None,
 ) -> Tuple[Optional[str], float]:
     """Predict monument label for one image. Returns (label, confidence) or (None, 0.0).
 
     Rejects low-confidence or ambiguous (small top-1 vs top-2 margin) predictions as Unknown.
     """
+    be = resolve_monument_backend(backend)
+    if be == "yolo_cls":
+        out = _predict_yolo_cls_one(
+            image_path,
+            device or _get_device(),
+            confidence_threshold,
+            margin_threshold,
+        )
+        if out is None:
+            return None, 0.0
+        return out["label"], float(out["confidence"])
+
     import numpy as np
 
     model = load_monument_model(model_dir)
@@ -489,6 +522,62 @@ def predict_monument(
     return label, float(conf)
 
 
+def _yolo_device_arg(device: Optional[str]) -> str:
+    if not device or device == "cuda":
+        try:
+            import torch
+
+            return "0" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            return "cpu"
+    return device
+
+
+def _predict_yolo_cls_one(
+    image_path: str,
+    device: str,
+    confidence_threshold: float,
+    margin_threshold: float,
+    model: Any = None,
+) -> Optional[Dict[str, Any]]:
+    import numpy as np
+
+    if not os.path.isfile(MONUMENT_YOLO_CLS_WEIGHTS) and model is None:
+        return None
+    try:
+        from ultralytics import YOLO  # type: ignore
+    except Exception as exc:
+        logger.warning("ultralytics not available for yolo_cls backend: %s", exc)
+        return None
+
+    if model is None:
+        model = YOLO(MONUMENT_YOLO_CLS_WEIGHTS)
+    res = model.predict(image_path, verbose=False, device=_yolo_device_arg(device))
+    if not res:
+        return {"label": "Unknown", "confidence": 0.0, "reject_reason": "predict_empty"}
+    r0 = res[0]
+    probs = getattr(r0, "probs", None)
+    if probs is None:
+        return {"label": "Unknown", "confidence": 0.0, "reject_reason": "no_probs"}
+    top1 = int(probs.top1)
+    names = r0.names if isinstance(r0.names, dict) else {i: n for i, n in enumerate(r0.names)}
+    label = str(names.get(top1, top1))
+    conf = float(probs.top1conf)
+    data = probs.data.cpu().numpy() if hasattr(probs.data, "cpu") else np.asarray(probs.data)
+    arr = np.asarray(data).reshape(-1)
+    order = np.argsort(-arr)
+    margin = float(arr[order[0]] - arr[order[1]]) if len(order) > 1 else float(arr[order[0]])
+    if conf >= confidence_threshold and margin >= margin_threshold:
+        return {"label": label, "confidence": conf, "margin": margin}
+    reason = "low_confidence" if conf < confidence_threshold else "ambiguous_margin"
+    return {
+        "label": "Unknown",
+        "confidence": conf,
+        "margin": margin,
+        "reject_reason": reason,
+    }
+
+
 def run_monument_recognition(
     frames_dir: str,
     model_dir: str,
@@ -498,19 +587,99 @@ def run_monument_recognition(
     detections_by_frame: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     max_person_count: int = 3,
     max_person_area_ratio: float = 0.25,
+    backend: Optional[str] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Run monument recognition on frames. Returns { frame_filename: { label, confidence } }.
 
     Frames dominated by people are skipped (Unknown). Predictions below confidence_threshold
     or with top-1/top-2 margin below margin_threshold become Unknown.
+
+    backend: 'yolo_cls' (default when weights exist) or 'resnet' (legacy ResNet18+LR).
     """
+    be = resolve_monument_backend(backend)
+    if be == "yolo_cls":
+        return _run_monument_yolo_cls(
+            frames_dir=frames_dir,
+            device=device or _get_device(),
+            confidence_threshold=confidence_threshold,
+            margin_threshold=margin_threshold,
+            detections_by_frame=detections_by_frame,
+            max_person_count=max_person_count,
+            max_person_area_ratio=max_person_area_ratio,
+        )
+    return _run_monument_resnet(
+        frames_dir=frames_dir,
+        model_dir=model_dir,
+        device=device or _get_device(),
+        confidence_threshold=confidence_threshold,
+        margin_threshold=margin_threshold,
+        detections_by_frame=detections_by_frame,
+        max_person_count=max_person_count,
+        max_person_area_ratio=max_person_area_ratio,
+    )
+
+
+def _run_monument_yolo_cls(
+    frames_dir: str,
+    device: str,
+    confidence_threshold: float,
+    margin_threshold: float,
+    detections_by_frame: Optional[Dict[str, List[Dict[str, Any]]]],
+    max_person_count: int,
+    max_person_area_ratio: float,
+) -> Dict[str, Dict[str, Any]]:
+    if not os.path.isfile(MONUMENT_YOLO_CLS_WEIGHTS):
+        logger.warning("YOLO-cls weights missing at %s", MONUMENT_YOLO_CLS_WEIGHTS)
+        return {}
+    try:
+        from ultralytics import YOLO  # type: ignore
+    except Exception as exc:
+        logger.warning("ultralytics import failed: %s", exc)
+        return {}
+
+    model = YOLO(MONUMENT_YOLO_CLS_WEIGHTS)
+    results: Dict[str, Dict[str, Any]] = {}
+    frame_files = [
+        f for f in sorted(os.listdir(frames_dir))
+        if f.lower().endswith(_ALLOWED_EXT)
+    ]
+    for name in frame_files:
+        path = os.path.join(frames_dir, name)
+        dets = None if detections_by_frame is None else detections_by_frame.get(name)
+        skip, reason = _frame_should_skip_monument(
+            dets, path, max_person_count, max_person_area_ratio
+        )
+        if skip:
+            results[name] = {"label": "Unknown", "confidence": 0.0, "reject_reason": reason}
+            continue
+        out = _predict_yolo_cls_one(
+            path, device, confidence_threshold, margin_threshold, model=model
+        )
+        results[name] = out or {
+            "label": "Unknown",
+            "confidence": 0.0,
+            "reject_reason": "yolo_predict_failed",
+        }
+    return results
+
+
+def _run_monument_resnet(
+    frames_dir: str,
+    model_dir: str,
+    device: str,
+    confidence_threshold: float,
+    margin_threshold: float,
+    detections_by_frame: Optional[Dict[str, List[Dict[str, Any]]]],
+    max_person_count: int,
+    max_person_area_ratio: float,
+) -> Dict[str, Dict[str, Any]]:
+    """Legacy ResNet18 + LogisticRegression path."""
     import numpy as np
 
     model = load_monument_model(model_dir)
     if model is None:
         return {}
 
-    device = device or _get_device()
     preprocess = str(model.get("preprocess", "none"))
     results: Dict[str, Dict[str, Any]] = {}
     frame_files = [
@@ -527,7 +696,6 @@ def run_monument_recognition(
         batch_paths = paths[i : i + batch_size]
         batch_names = frame_files[i : i + batch_size]
 
-        # Gate: person-heavy frames → Unknown without running expensive rembg/CNN
         to_extract_paths: List[str] = []
         to_extract_names: List[str] = []
         for p, name in zip(batch_paths, batch_names):

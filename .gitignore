@@ -40,3 +40,5 @@ vista-prototype/known_faces/
 vista-prototype/training_data/**
 !vista-prototype/training_data/monument_policy.json
 vista-prototype/monument_model/
+# Local monument v2 experiments (datasets, YOLO runs, large weights)
+experiments/monument_v2/

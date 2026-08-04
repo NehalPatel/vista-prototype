@@ -32,6 +32,9 @@ INBOX_FACES_DIR = os.path.join(TRAINING_DATA_DIR, "inbox_faces")
 INBOX_MONUMENTS_DIR = os.path.join(TRAINING_DATA_DIR, "inbox_monuments")
 # Trained monument classifier and index
 MONUMENT_MODEL_DIR = os.path.join(VISTA_DIR, "monument_model")
+# Optional YOLO-cls monument backend (Ultralytics classify)
+MONUMENT_YOLO_CLS_DIR = os.path.join(MONUMENT_MODEL_DIR, "yolo_cls")
+MONUMENT_YOLO_CLS_WEIGHTS = os.path.join(MONUMENT_YOLO_CLS_DIR, "best.pt")
 
 
 def ensure_directories() -> None:

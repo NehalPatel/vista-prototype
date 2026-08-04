@@ -56,7 +56,8 @@ def api_process():
     )
     from pipeline.faces import run_face_detection  # noqa: WPS433
     from pipeline.monuments import (  # noqa: WPS433
-        load_monument_model,
+        monument_model_available,
+        resolve_monument_backend,
         run_monument_recognition,
     )
     from pipeline.mongodb_store import index_detection_results_to_mongodb  # noqa: WPS433
@@ -270,7 +271,8 @@ def api_process():
             total_face_detections = sum(len(v) for v in faces_by_frame.values())
 
         monuments_by_frame = {}
-        if load_monument_model(MONUMENT_MODEL_DIR) is not None:
+        monument_backend = resolve_monument_backend(payload.get("monument_backend"))
+        if monument_model_available(MONUMENT_MODEL_DIR, backend=monument_backend):
             try:
                 t_mon = time.perf_counter()
                 # Stricter than object conf by default: avoid labeling street/crowd frames.
@@ -291,10 +293,12 @@ def api_process():
                     detections_by_frame=results_by_frame if run_objects else None,
                     max_person_count=int(payload.get("monument_max_person_count", 3)),
                     max_person_area_ratio=float(payload.get("monument_max_person_area_ratio", 0.25)),
+                    backend=monument_backend,
                 )
                 run_stats["monument_recognition_sec"] = round(time.perf_counter() - t_mon, 2)
                 run_stats["monument_conf_threshold"] = monument_conf
                 run_stats["monument_margin_threshold"] = monument_margin
+                run_stats["monument_backend"] = monument_backend
 
                 import cv2
 
