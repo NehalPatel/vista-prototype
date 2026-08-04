@@ -70,6 +70,9 @@ class ImageMetrics:
     outlier_z: float
     duplicate_of: str | None
     reasons: list[str]
+    rembg_fg_ratio: float | None = None
+    rembg_structure_count: int | None = None
+    rembg_largest_share: float | None = None
 
 
 def _is_image_file(path: str) -> bool:
@@ -231,6 +234,13 @@ def _classify_reasons(
     max_person_count: int,
     max_person_area_ratio: float,
     outlier_z_threshold: float,
+    rembg_fg_ratio: float | None = None,
+    rembg_structure_count: int | None = None,
+    rembg_largest_share: float | None = None,
+    min_fg_ratio: float = 0.0,
+    max_fg_ratio: float = 1.0,
+    max_structure_blobs: int = 999,
+    min_largest_share: float = 0.0,
 ) -> list[str]:
     reasons: list[str] = []
     if blur_var < blur_threshold:
@@ -245,7 +255,56 @@ def _classify_reasons(
         reasons.append("person_dominant")
     if outlier_z > outlier_z_threshold:
         reasons.append("class_consistency_outlier")
+    if rembg_fg_ratio is not None:
+        if rembg_fg_ratio < min_fg_ratio:
+            reasons.append("rembg_subject_too_small")
+        if rembg_fg_ratio > max_fg_ratio:
+            reasons.append("rembg_foreground_full_frame")
+    if rembg_structure_count is not None and rembg_structure_count > max_structure_blobs:
+        reasons.append("multi_structure_candidate")
+    if rembg_largest_share is not None and rembg_largest_share < min_largest_share:
+        reasons.append("mask_fragmented")
     return reasons
+
+
+def _rembg_mask_metrics(
+    rgb: np.ndarray,
+    min_blob_area_ratio: float,
+) -> tuple[float | None, int | None, float | None]:
+    """Foreground ratio, count of large connected components, largest share of FG."""
+    try:
+        from rembg import remove  # type: ignore
+    except ImportError:
+        return None, None, None
+    h, w = rgb.shape[:2]
+    img_area = max(1, h * w)
+    min_area = max(32, int(min_blob_area_ratio * img_area))
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    ok, buf = cv2.imencode(".png", bgr)
+    if not ok:
+        return None, None, None
+    try:
+        out_bytes = remove(buf.tobytes())
+    except Exception:
+        return None, None, None
+    arr = np.frombuffer(out_bytes, dtype=np.uint8)
+    dec = cv2.imdecode(arr, cv2.IMREAD_UNCHANGED)
+    if dec is None or dec.shape[2] < 4:
+        return None, None, None
+    alpha = dec[:, :, 3]
+    binary = (alpha > 127).astype(np.uint8)
+    fg_ratio = float(binary.mean())
+    n_lab, _, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    areas: list[int] = []
+    for i in range(1, n_lab):
+        areas.append(int(stats[i, cv2.CC_STAT_AREA]))
+    total_fg = sum(areas)
+    if total_fg <= 0:
+        return fg_ratio, 0, 0.0
+    large = [a for a in areas if a >= min_area]
+    largest = max(areas) if areas else 0
+    largest_share = float(largest / total_fg)
+    return fg_ratio, len(large), largest_share
 
 
 def run_scan_or_quarantine(args: argparse.Namespace) -> dict[str, Any]:
@@ -284,6 +343,13 @@ def run_scan_or_quarantine(args: argparse.Namespace) -> dict[str, Any]:
         )
         vec = embedder.encode(rgb)
         class_vectors.setdefault(class_name, []).append(vec)
+        rembg_fg: float | None = None
+        rembg_n: int | None = None
+        rembg_share: float | None = None
+        if args.rembg_check:
+            rembg_fg, rembg_n, rembg_share = _rembg_mask_metrics(
+                rgb, float(args.rembg_min_blob_area_ratio)
+            )
         base_rows.append(
             {
                 "class_name": class_name,
@@ -296,6 +362,9 @@ def run_scan_or_quarantine(args: argparse.Namespace) -> dict[str, Any]:
                 "file_sha1": file_sha1,
                 "dhash64": dhash64,
                 "vec": vec,
+                "rembg_fg_ratio": rembg_fg,
+                "rembg_structure_count": rembg_n,
+                "rembg_largest_share": rembg_share,
             }
         )
 
@@ -358,6 +427,9 @@ def run_scan_or_quarantine(args: argparse.Namespace) -> dict[str, Any]:
     kept_count = 0
     for row in base_rows:
         outlier_z = float(row.get("outlier_z", 0.0))
+        rembg_fg = row.get("rembg_fg_ratio")
+        rembg_n = row.get("rembg_structure_count")
+        rembg_share = row.get("rembg_largest_share")
         reasons = _classify_reasons(
             blur_var=float(row["blur_var"]),
             brightness=float(row["brightness"]),
@@ -370,10 +442,24 @@ def run_scan_or_quarantine(args: argparse.Namespace) -> dict[str, Any]:
             max_person_count=int(args.max_person_count),
             max_person_area_ratio=float(args.max_person_area_ratio),
             outlier_z_threshold=float(args.outlier_z_threshold),
+            rembg_fg_ratio=rembg_fg if args.rembg_check else None,
+            rembg_structure_count=rembg_n if args.rembg_check else None,
+            rembg_largest_share=rembg_share if args.rembg_check else None,
+            min_fg_ratio=float(args.rembg_min_fg_ratio),
+            max_fg_ratio=float(args.rembg_max_fg_ratio),
+            max_structure_blobs=int(args.rembg_max_structure_blobs),
+            min_largest_share=float(args.rembg_min_largest_share),
         )
         duplicate_of = row.get("duplicate_of")
         if duplicate_of:
             reasons.append("duplicate_image")
+        if (
+            args.urban_review_candidates
+            and rembg_fg is not None
+            and 0.12 < rembg_fg < 0.48
+            and int(row["person_count"]) == 0
+        ):
+            reasons.append("urban_context_review")
         metric = ImageMetrics(
             class_name=row["class_name"],
             rel_path=row["rel_path"],
@@ -386,6 +472,9 @@ def run_scan_or_quarantine(args: argparse.Namespace) -> dict[str, Any]:
             outlier_z=outlier_z,
             duplicate_of=duplicate_of,
             reasons=reasons,
+            rembg_fg_ratio=rembg_fg,
+            rembg_structure_count=rembg_n,
+            rembg_largest_share=rembg_share,
         )
         all_metrics.append(metric)
 
@@ -439,6 +528,13 @@ def run_scan_or_quarantine(args: argparse.Namespace) -> dict[str, Any]:
             "outlier_z_threshold": args.outlier_z_threshold,
             "person_conf": args.person_conf,
             "device": device,
+            "rembg_check": args.rembg_check,
+            "rembg_min_fg_ratio": args.rembg_min_fg_ratio,
+            "rembg_max_fg_ratio": args.rembg_max_fg_ratio,
+            "rembg_max_structure_blobs": args.rembg_max_structure_blobs,
+            "rembg_min_largest_share": args.rembg_min_largest_share,
+            "rembg_min_blob_area_ratio": args.rembg_min_blob_area_ratio,
+            "urban_review_candidates": args.urban_review_candidates,
         },
         "paths": {
             "monuments_dir": monuments_dir,
@@ -464,6 +560,9 @@ def run_scan_or_quarantine(args: argparse.Namespace) -> dict[str, Any]:
                     "person_area_ratio": m.person_area_ratio,
                     "embedding_distance": m.embedding_distance,
                     "outlier_z": m.outlier_z,
+                    "rembg_fg_ratio": m.rembg_fg_ratio,
+                    "rembg_structure_count": m.rembg_structure_count,
+                    "rembg_largest_share": m.rembg_largest_share,
                 },
                 "duplicate_of": m.duplicate_of,
             }
@@ -551,6 +650,11 @@ def parse_args() -> argparse.Namespace:
         help="scan=report only, quarantine=move flagged files, restore=move back, purge=delete quarantine images",
     )
     parser.add_argument(
+        "--scan",
+        action="store_true",
+        help="Same as --mode scan (report only). Cannot be combined with another --mode.",
+    )
+    parser.add_argument(
         "--monuments-dir",
         default=TRAINING_MONUMENTS_DIR,
         help="Path to monument training root.",
@@ -592,6 +696,51 @@ def parse_args() -> argparse.Namespace:
         default=4,
         help="dHash hamming distance threshold for near-duplicates (lower=stricter).",
     )
+    parser.add_argument(
+        "--no-people",
+        action="store_true",
+        help="Reject any visible person (sets max person count to 0 and area ratio to 0).",
+    )
+    parser.add_argument(
+        "--rembg-check",
+        action="store_true",
+        help="Run rembg per image and apply foreground / multi-blob heuristics (slow; needs rembg).",
+    )
+    parser.add_argument(
+        "--rembg-min-fg-ratio",
+        type=float,
+        default=0.06,
+        help="With --rembg-check: flag if foreground share of pixels is below this.",
+    )
+    parser.add_argument(
+        "--rembg-max-fg-ratio",
+        type=float,
+        default=0.93,
+        help="With --rembg-check: flag if foreground covers more than this (likely rembg failure).",
+    )
+    parser.add_argument(
+        "--rembg-max-structure-blobs",
+        type=int,
+        default=1,
+        help="With --rembg-check: flag if more than this many large connected components.",
+    )
+    parser.add_argument(
+        "--rembg-min-largest-share",
+        type=float,
+        default=0.52,
+        help="With --rembg-check: flag if largest blob is smaller than this fraction of total FG.",
+    )
+    parser.add_argument(
+        "--rembg-min-blob-area-ratio",
+        type=float,
+        default=0.04,
+        help="Min area (as fraction of image) for a blob to count as a structure.",
+    )
+    parser.add_argument(
+        "--urban-review-candidates",
+        action="store_true",
+        help="Tag images with mid-range rembg FG and no people for manual urban/clutter review.",
+    )
 
     parser.add_argument(
         "--yes",
@@ -603,6 +752,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.scan and args.mode != "scan":
+        raise SystemExit(
+            f"error: --scan cannot be used with --mode {args.mode}; use only --scan or --mode scan"
+        )
+    if args.no_people:
+        args.max_person_count = 0
+        args.max_person_area_ratio = 0.0
     if args.mode in ("scan", "quarantine"):
         run_scan_or_quarantine(args)
         return 0

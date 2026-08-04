@@ -24,6 +24,8 @@ tqdm
 scipy
 scikit-learn
 
+# Optional: monument background removal (rembg) and eval heatmaps — see requirements-monuments-extra.txt
+
 # GPU: Default pip installs are often CPU-only. For CUDA GPU:
 #   PyTorch (YOLO): https://pytorch.org – e.g. pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 #   ONNX (InsightFace): pip install onnxruntime-gpu  (replace onnxruntime)

@@ -21,6 +21,10 @@ TRAINING_FACES_DIR = os.path.join(TRAINING_DATA_DIR, "faces")
 TRAINING_MONUMENTS_DIR = os.path.join(TRAINING_DATA_DIR, "monuments")
 # Kaggle / provided dataset (e.g. Indian monuments) - folder per class
 TRAINING_DATASET_DIR = os.path.join(TRAINING_DATA_DIR, "dataset")
+# Excluded monument class folder names (see excluded_classes in file)
+MONUMENT_POLICY_PATH = os.path.join(TRAINING_DATA_DIR, "monument_policy.json")
+# Train/val split manifests for monument evaluation
+MONUMENT_SPLITS_DIR = os.path.join(TRAINING_DATA_DIR, "monument_splits")
 # Downloaded/unorganized datasets (e.g. Kaggle): run organize --from-datasets to copy into faces/ and monuments/
 DATASETS_DIR = os.path.join(TRAINING_DATA_DIR, "datasets")
 # Inbox: put unorganized images here in subfolders (subfolder name = person or monument name), then run organize script
@@ -28,6 +32,9 @@ INBOX_FACES_DIR = os.path.join(TRAINING_DATA_DIR, "inbox_faces")
 INBOX_MONUMENTS_DIR = os.path.join(TRAINING_DATA_DIR, "inbox_monuments")
 # Trained monument classifier and index
 MONUMENT_MODEL_DIR = os.path.join(VISTA_DIR, "monument_model")
+# Optional YOLO-cls monument backend (Ultralytics classify)
+MONUMENT_YOLO_CLS_DIR = os.path.join(MONUMENT_MODEL_DIR, "yolo_cls")
+MONUMENT_YOLO_CLS_WEIGHTS = os.path.join(MONUMENT_YOLO_CLS_DIR, "best.pt")
 
 
 def ensure_directories() -> None:
@@ -40,6 +47,7 @@ def ensure_directories() -> None:
         TRAINING_DATA_DIR,
         TRAINING_FACES_DIR,
         TRAINING_MONUMENTS_DIR,
+        MONUMENT_SPLITS_DIR,
         INBOX_FACES_DIR,
         INBOX_MONUMENTS_DIR,
         MONUMENT_MODEL_DIR,

@@ -60,11 +60,10 @@ def match(embedding: np.ndarray, known: List[Tuple[np.ndarray, str]], thresholds
             best_label = label
 
     same_t = thresholds.get("same", 0.6)
-    maybe_t = thresholds.get("maybe", 0.8)
+    # Uncertain ("maybe") matches are treated as Unknown so the UI only shows
+    # high-confidence identities (green badges), not Maybe: labels.
     if best_dist < same_t:
         final_label = best_label
-    elif best_dist < maybe_t:
-        final_label = f"Maybe:{best_label}"
     else:
         final_label = "Unknown"
 
