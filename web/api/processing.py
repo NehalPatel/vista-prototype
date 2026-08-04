@@ -273,20 +273,35 @@ def api_process():
         if load_monument_model(MONUMENT_MODEL_DIR) is not None:
             try:
                 t_mon = time.perf_counter()
+                # Stricter than object conf by default: avoid labeling street/crowd frames.
+                try:
+                    monument_conf = float(payload.get("monument_conf_threshold", max(0.75, conf_threshold)))
+                except Exception:
+                    monument_conf = max(0.75, conf_threshold)
+                try:
+                    monument_margin = float(payload.get("monument_margin_threshold", 0.15))
+                except Exception:
+                    monument_margin = 0.15
                 monuments_by_frame = run_monument_recognition(
                     paths["processed_frames"],
                     MONUMENT_MODEL_DIR,
                     device=device,
-                    confidence_threshold=conf_threshold,
+                    confidence_threshold=monument_conf,
+                    margin_threshold=monument_margin,
+                    detections_by_frame=results_by_frame if run_objects else None,
+                    max_person_count=int(payload.get("monument_max_person_count", 3)),
+                    max_person_area_ratio=float(payload.get("monument_max_person_area_ratio", 0.25)),
                 )
                 run_stats["monument_recognition_sec"] = round(time.perf_counter() - t_mon, 2)
+                run_stats["monument_conf_threshold"] = monument_conf
+                run_stats["monument_margin_threshold"] = monument_margin
 
                 import cv2
 
                 for fname, info in monuments_by_frame.items():
                     label = info.get("label")
                     conf = info.get("confidence", 0)
-                    if label and label != "Unknown" and conf >= conf_threshold:
+                    if label and label != "Unknown" and conf >= monument_conf:
                         path_img = os.path.join(paths["processed_frames"], fname)
                         img = cv2.imread(path_img)
                         if img is not None:

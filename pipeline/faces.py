@@ -113,6 +113,8 @@ def run_face_detection(
                 x1, y1, x2, y2 = d["bbox"]
                 cv2.rectangle(img_annotated, (x1, y1), (x2, y2), (255, 255, 0), 2)
                 label = rec.get("label", "Unknown")
+                if isinstance(label, str) and label.startswith("Maybe:"):
+                    label = "Unknown"
                 conf = rec.get("confidence", 0)
                 text = f"{label} {conf:.2f}" if label != "Unknown" else f"face {conf:.2f}"
                 cv2.putText(

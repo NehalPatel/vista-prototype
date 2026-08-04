@@ -287,6 +287,12 @@ async function renderResultsFromVideoId(videoId) {
         if (!objectsIndex['face'][fname]) objectsIndex['face'][fname] = [];
         for (const fa of faces) {
           const label = String(fa.label != null ? fa.label : 'Unknown');
+          // Skip uncertain Maybe: matches — only confident identities appear in Detected Faces
+          if (label.startsWith('Maybe:')) {
+            const item = { bbox: fa.bbox, conf: fa.confidence, label: 'Unknown' };
+            objectsIndex['face'][fname].push(item);
+            continue;
+          }
           const key = 'face:' + label;
           byClass[key] = (byClass[key] || 0) + 1;
           if (!objectsIndex[key]) objectsIndex[key] = {};
@@ -341,9 +347,9 @@ async function renderResultsFromVideoId(videoId) {
       li.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openModalForClass(cls); } });
       objectsListEl.appendChild(li);
     }
-    // Detected Faces widget: one entry per recognized label in the list (no duplicate in header)
+    // Detected Faces widget: confident matches only (exclude face:Maybe:*)
     const faceEntries = Object.entries(objectsIndex)
-      .filter(([cls]) => cls.startsWith('face:'))
+      .filter(([cls]) => cls.startsWith('face:') && !cls.startsWith('face:Maybe:'))
       .map(([cls, framesMap]) => [cls, Object.keys(framesMap).reduce((n, fn) => n + (framesMap[fn]?.length || 0), 0)]);
     faceEntries.sort((a, b) => b[1] - a[1]);
     const faceCount = totalFaceDetections || 0;
@@ -352,8 +358,7 @@ async function renderResultsFromVideoId(videoId) {
       if (faceCount > 0 && faceEntries.length > 0) {
         for (const [cls, count] of faceEntries) {
           const li = document.createElement('li');
-          const isMaybe = cls.startsWith('face:Maybe:');
-          li.className = 'clickable ' + (isMaybe ? 'face-badge-maybe' : 'face-badge-success');
+          li.className = 'clickable face-badge-success';
           li.setAttribute('role','button');
           li.setAttribute('tabindex','0');
           li.dataset.cls = cls;

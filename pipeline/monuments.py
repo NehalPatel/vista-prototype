@@ -377,7 +377,27 @@ def load_monument_model(model_dir: str) -> Optional[Dict[str, Any]]:
         confs = [float(probs[i, pred_idx[i]]) for i in range(len(pred_idx))]
         return labels, confs
 
+    def predict_with_margin(
+        features: np.ndarray,
+    ) -> Tuple[List[str], List[float], List[float]]:
+        """Return (labels, top1_conf, top1-top2 margin) per row."""
+        x = (features - mean) / (scale + 1e-8)
+        logits = x @ coef.T + intercept
+        probs = _softmax(logits)
+        # sort descending per row
+        order = np.argsort(-probs, axis=1)
+        top1 = order[:, 0]
+        top2 = order[:, 1] if probs.shape[1] > 1 else order[:, 0]
+        labels = [meta["class_names"][i] for i in top1]
+        confs = [float(probs[i, top1[i]]) for i in range(len(top1))]
+        margins = [
+            float(probs[i, top1[i]] - probs[i, top2[i]]) if probs.shape[1] > 1 else float(probs[i, top1[i]])
+            for i in range(len(top1))
+        ]
+        return labels, confs, margins
+
     meta["predict_fn"] = predict
+    meta["predict_with_margin_fn"] = predict_with_margin
     meta["_coef"] = coef
     meta["_intercept"] = intercept
     meta["_mean"] = mean
@@ -391,12 +411,61 @@ def _softmax(x: "np.ndarray") -> "np.ndarray":
     return e / e.sum(axis=1, keepdims=True)
 
 
+def _person_stats_from_detections(dets: List[Dict[str, Any]], frame_w: int, frame_h: int) -> Tuple[int, float]:
+    """Count YOLO person boxes and their total area ratio from detection dicts."""
+    img_area = float(max(1, frame_w * frame_h))
+    count = 0
+    area = 0.0
+    for d in dets or []:
+        cls = str(d.get("class") or "").lower()
+        if cls != "person":
+            continue
+        bbox = d.get("bbox") or []
+        if len(bbox) < 4:
+            continue
+        x1, y1, x2, y2 = [float(v) for v in bbox[:4]]
+        count += 1
+        area += max(0.0, x2 - x1) * max(0.0, y2 - y1)
+    return count, float(area / img_area)
+
+
+def _frame_should_skip_monument(
+    dets: Optional[List[Dict[str, Any]]],
+    frame_path: str,
+    max_person_count: int,
+    max_person_area_ratio: float,
+) -> Tuple[bool, str]:
+    """Heuristic gate: skip frames dominated by people (street/crowd) for monument ID."""
+    if dets is None:
+        return False, ""
+    try:
+        import cv2  # type: ignore
+        img = cv2.imread(frame_path)
+        if img is None:
+            h, w = 1, 1
+        else:
+            h, w = img.shape[:2]
+    except Exception:
+        h, w = 1, 1
+    n_person, person_ratio = _person_stats_from_detections(dets, w, h)
+    if n_person > max_person_count:
+        return True, "too_many_people"
+    if person_ratio > max_person_area_ratio:
+        return True, "person_dominant"
+    return False, ""
+
+
 def predict_monument(
     image_path: str,
     model_dir: str,
     device: Optional[str] = None,
+    confidence_threshold: float = 0.75,
+    margin_threshold: float = 0.15,
 ) -> Tuple[Optional[str], float]:
-    """Predict monument label for one image. Returns (label, confidence) or (None, 0.0)."""
+    """Predict monument label for one image. Returns (label, confidence) or (None, 0.0).
+
+    Rejects low-confidence or ambiguous (small top-1 vs top-2 margin) predictions as Unknown.
+    """
     import numpy as np
 
     model = load_monument_model(model_dir)
@@ -408,17 +477,33 @@ def predict_monument(
     if not feats or feats[0] is None:
         return None, 0.0
     X = np.array([feats[0]], dtype=np.float32)
-    labels, confs = model["predict_fn"](X)
-    return labels[0], confs[0]
+    predict_m = model.get("predict_with_margin_fn") or model["predict_fn"]
+    if predict_m is model["predict_fn"]:
+        labels, confs = predict_m(X)
+        margins = [1.0]
+    else:
+        labels, confs, margins = predict_m(X)
+    label, conf, margin = labels[0], confs[0], margins[0]
+    if conf < confidence_threshold or margin < margin_threshold:
+        return "Unknown", float(conf)
+    return label, float(conf)
 
 
 def run_monument_recognition(
     frames_dir: str,
     model_dir: str,
     device: Optional[str] = None,
-    confidence_threshold: float = 0.5,
+    confidence_threshold: float = 0.75,
+    margin_threshold: float = 0.15,
+    detections_by_frame: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    max_person_count: int = 3,
+    max_person_area_ratio: float = 0.25,
 ) -> Dict[str, Dict[str, Any]]:
-    """Run monument recognition on each image in frames_dir. Returns { frame_filename: { label, confidence } }."""
+    """Run monument recognition on frames. Returns { frame_filename: { label, confidence } }.
+
+    Frames dominated by people are skipped (Unknown). Predictions below confidence_threshold
+    or with top-1/top-2 margin below margin_threshold become Unknown.
+    """
     import numpy as np
 
     model = load_monument_model(model_dir)
@@ -427,7 +512,7 @@ def run_monument_recognition(
 
     device = device or _get_device()
     preprocess = str(model.get("preprocess", "none"))
-    results = {}
+    results: Dict[str, Dict[str, Any]] = {}
     frame_files = [
         f for f in sorted(os.listdir(frames_dir))
         if f.lower().endswith(_ALLOWED_EXT)
@@ -435,26 +520,71 @@ def run_monument_recognition(
     if not frame_files:
         return results
 
+    predict_m = model.get("predict_with_margin_fn")
     paths = [os.path.join(frames_dir, f) for f in frame_files]
     batch_size = 16
     for i in range(0, len(paths), batch_size):
         batch_paths = paths[i : i + batch_size]
         batch_names = frame_files[i : i + batch_size]
-        feats = _extract_features_batch(batch_paths, device, preprocess=preprocess)
+
+        # Gate: person-heavy frames → Unknown without running expensive rembg/CNN
+        to_extract_paths: List[str] = []
+        to_extract_names: List[str] = []
+        for p, name in zip(batch_paths, batch_names):
+            dets = None
+            if detections_by_frame is not None:
+                dets = detections_by_frame.get(name)
+            skip, reason = _frame_should_skip_monument(
+                dets, p, max_person_count, max_person_area_ratio
+            )
+            if skip:
+                results[name] = {
+                    "label": "Unknown",
+                    "confidence": 0.0,
+                    "reject_reason": reason,
+                }
+            else:
+                to_extract_paths.append(p)
+                to_extract_names.append(name)
+
+        if not to_extract_paths:
+            continue
+
+        feats = _extract_features_batch(to_extract_paths, device, preprocess=preprocess)
         valid = []
         valid_names = []
         for j, f in enumerate(feats):
             if f is not None:
                 valid.append(f)
-                valid_names.append(batch_names[j])
+                valid_names.append(to_extract_names[j])
+            else:
+                results[to_extract_names[j]] = {
+                    "label": "Unknown",
+                    "confidence": 0.0,
+                    "reject_reason": "feature_extract_failed",
+                }
         if not valid:
             continue
         X = np.array(valid, dtype=np.float32)
-        labels, confs = model["predict_fn"](X)
-        for name, label, conf in zip(valid_names, labels, confs):
-            if conf >= confidence_threshold:
-                results[name] = {"label": label, "confidence": float(conf)}
+        if predict_m is not None:
+            labels, confs, margins = predict_m(X)
+        else:
+            labels, confs = model["predict_fn"](X)
+            margins = [1.0] * len(labels)
+        for name, label, conf, margin in zip(valid_names, labels, confs, margins):
+            if conf >= confidence_threshold and margin >= margin_threshold:
+                results[name] = {
+                    "label": label,
+                    "confidence": float(conf),
+                    "margin": float(margin),
+                }
             else:
-                results[name] = {"label": "Unknown", "confidence": float(conf)}
+                reason = "low_confidence" if conf < confidence_threshold else "ambiguous_margin"
+                results[name] = {
+                    "label": "Unknown",
+                    "confidence": float(conf),
+                    "margin": float(margin),
+                    "reject_reason": reason,
+                }
 
     return results
